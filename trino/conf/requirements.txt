@@ -1,0 +1,4 @@
+awscliv2
+markupsafe==2.0.1
+trino
+shutil

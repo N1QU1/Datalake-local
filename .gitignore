@@ -1,0 +1,90 @@
+# Mac
+.DS_Store
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# Local History for Visual Studio Code
+.history/
+
+# Built Visual Studio Code Extensions
+*.vsix
+.vscode
+
+# data
+data/mariadb/*
+data/minio/*
+data/spark/notebooks/.ipynb_checkpoints
+data/spark/notebooks/metastore_db
+data/spark/notebooks/derby.log
+data/spark/warehouse/*
+data/stage/*
+data/trino/*
+data/postgres/*
+data/dremio/*
+data/elasticsearch/*
+data/metabase/*
+data/backup/*
+data/html/index.*.html
+
+# logs
+log/*
+projects/dbt/**/logs
+projects/dbt/**/dbt_packages
+projects/dbt/**/target
+
+# conf
+conf/**/*.jks
+conf/**/*.crt
+conf/cube/.cubestore
+
+# python
+
+**/__pycache__
+
+# JetBrains
+**/.idea
+
+# Dagster
+projects/dagster/*.log
+projects/dagster/metastore_db
+
+# Metabase 
+conf/metabase/metabase.db.trace.db
+
+
+#cube removido 
+"""cube:
+    #image: cubejs/cube
+    image: answercn/cube
+    container_name: cube
+    hostname: cube
+    volumes:
+      - ./conf/cube:/cube/conf
+    ports:
+      - 3000:3000 
+      - 4000:4000
+      - 3245:3245
+    networks:
+      - ndsnet
+    depends_on:
+      - aio"""
+#metabase removido 
+metabase:
+    #build: metabase/
+    image: answercn/ngods-stocks-metabase
+    container_name: metabase
+    depends_on:
+      - cube
+    hostname: metabase
+    volumes:
+      - ./conf/metabase:/conf
+    ports:
+      - 3030:3030
+    networks:
+      - ndsnet

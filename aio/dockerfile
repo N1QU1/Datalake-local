@@ -1,0 +1,7 @@
+FROM answercn/ngods-stocks-aio:latest
+
+# Copiar los archivos de requerimientos e instalar dependencias
+COPY requirements.txt .
+RUN pip3 install -r requirements.txt
+# Comando de inicio que nunca termina
+#CMD ["bash", "-c", "while true; do sleep 1000; done"]
