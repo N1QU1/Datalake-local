@@ -193,3 +193,28 @@ Analytical (semantic) model is defined in [cube.dev](https://cube.dev/) and is u
 
 # Support
 Create a [github issue](https://github.com/zsvoboda/ngods-stocks/issues) if you have any questions.
+
+# Docker compose modification
+!A la hora de ejecutar la aplicacion, lo haremos de la forma normal y esperable para un docker compose, "docker compose up", las principales modificaciones son, la creacion de imagen de aio ahora incluye un requirements, que nos permite interactuar de forma correcta con dagster y python.
+!Por otra parte la imagen de trino, se ejecuta mediante un dockerfile ya encontrado previamente en el directorio, mas estaba comentada, principalmente se encarga de inicializar correctamente 
+el catalogo y las cuestiones minimas definidas en trino/conf/trino
+!Por ultimo hemos de mencionar la desaparicion de muchas de las funcionalidades como lo son spark o cube por ejemplo puesto que no aportaban a la creacion efectuada, en consecuencia sus imagenes han sido removidas del docker compose, manteniendo las de mc, minio (esta debido a su posible posterior implementacion), trino, dagster y postgres.
+
+# projects/dagster modification
+!En la carpeta projects/dagster se encuentran los archivos que definen el flujo de trabajo de dagster.
+!Encontramos ademas carpetas como input_files o processed files orientadas a la gestion de los archivos de input recibidos por parte de las distintas
+empresas, por otra parte tenemos launch, donde se generaran archivos de tipo sql con los cuales podremos recrear la base de datos en caso de reiniciar el sistema o una perdida de su estado.
+
+## workspace.py
+! contiene las distintas funciones y operaciones requeridas para la ejercucion de los distintos flujos de trabajo, como por ejemplo la operacion de descarga de archivos, la operacion de procesamiento de archivos, la operacion de carga de archivos, entre otras.
+### iterate_lib
+itera a traves de los archivos de input_files y ejecuta la operacion de descarga de archivos.
+Esto ultimo se efectua mediante un diccionario, con campos t_Create:valores para mantener un archivo y su tipo de tal forma que luego podamos insertar a la tabla, por otra parte tenemos
+rows, columns y name_file, que como sus nombres indican, son para la posterior generacion de tabla en la base de datos con unas ciertas, filas, columnas y nombre de archivo.
+### read_files_op
+Funcion encargada de la descarga del archivo.
+### identify_string_type
+identica de que valor se trata el string insertado, para determinar que formato tienen los valores a insertar, por ahora incluye, timestamp, bigint, double y varchar.
+
+### init
+Funcion encargada de ligar las anteriores operaciones, con el objetivo de establecer la base de datos.
