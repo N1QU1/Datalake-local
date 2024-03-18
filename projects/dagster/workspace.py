@@ -98,7 +98,6 @@ def identify_string_type(input_string):
     else:
         return "varchar"
 
-
 @op(required_resource_keys={'trino'})
 def init(context,tables):
     query_list = []
@@ -121,8 +120,14 @@ def init(context,tables):
                     query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,columns_definition)
                     input_query(conn,query,query_list)
                     columns = str(tables[ele]['columns'])[1:-1].replace("'","")
-                    context.log.info("{}".format(str(datetime.now()).split(".")[0]))
-                    query = '''insert into my_catalog.integracion.files (table_name,creation) values ('{}',CURRENT_TIMESTAMP)'''.format(name)
+                    #context.log.info("{}".format(str(datetime.now()).split(".")[0]))
+                    #context.log.info()
+                    current_datetime = str(datetime.now()).split(".")[0]
+                    context.log.info(f"Inserting values {current_datetime}")
+                    # Your SQL query with formatted datetime
+                    query = '''insert into my_catalog.integracion.files (table_name, creation) values ('{}',{})'''.format(name,"timestamp" + " '" + current_datetime + "'")
+
+                    #query = '''insert into my_catalog.integracion.files (table_name,creation) values ('{}','{}')'''.format(name, datetime.now())
                     input_query(conn,query,query_list)
                     for row in tables[ele]['rows']:
                         values = str(row)[1:-1].replace("nan","0").replace("NaT","Null").replace("Timestamp(","TIMESTAMP ").replace(")","")

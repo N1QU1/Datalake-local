@@ -1,12 +1,10 @@
 # ngods stock market demo 
 This repository contains a stock market analysis demo of the ngods data stack. The demo performs the following steps:
 
-1. Download selected stock symbols data from [Yahoo Finance API](https://finance.yahoo.com/).
-2. Store the stock data in ngods data warehouse (using [Iceberg](https://iceberg.apache.org/) format).
-3. Transform the data (e.g. normalize stock prices) using [dbt](https://www.getdbt.com/).
-4. Expose analytics data model using [cube.dev](https://cube.dev/).
-5. Visualize data as reports and dashboards using [Metabase](https://www.metabase.com/).
-6. Predicts stock prices using ARIMA in Apache Spark.
+1. Insertar tablas en input_files, de formato excel para efectuar la carga de los datos.
+2. Ejecucion de transformaciones en dagit, y su posterior transformacion en datos sql(Trino).
+3. Generacion de archivos, launch, para mantener el estado de la base de datos.
+
 
 The demo is packaged as [docker-compose](https://github.com/docker/compose) script that downloads, installs, and runs all components of the data stack.
 
@@ -19,26 +17,21 @@ The demo is packaged as [docker-compose](https://github.com/docker/compose) scri
 # ngods
 ngods stands for New Generation Opensource Data Stack. It includes the following components: 
 
-- [Apache Spark](https://spark.apache.org) for data transformation 
+- [Apache Spark](https://spark.apache.org) for data transformation (This has been removed from the demo, but in case we wanted a transformation to iceberg format, we would reemploy it)
 - [Apache Iceberg](https://iceberg.apache.org) as a data storage format 
 - [Trino](https://trino.io/) for federated data query 
-- [dbt](https://www.getdbt.com/) for ELT 
-- [Dagster](https://dagster.io/) for data orchetsration 
-- [cube.dev](https://cube.dev/) for data analysis and semantic data model 
-- [Metabase](https://www.metabase.com/) for self-service data visualization (dashboards) 
+- [Dagster](https://dagster.io/) for data orchestration 
 - [Minio](https://min.io) for local S3 storage 
-
-![ngods components](./img/ngods.architecture.png)
 
 ngods is open-sourced under a [BSD license](https://github.com/zsvoboda/ngods-stocks/blob/main/LICENSE) and it is distributed as a docker-compose script that supports Intel and ARM architectures.
 
 # Running the demo
 ngods requires a machine with at least 16GB RAM and Intel or Arm 64 CPU running [Docker](https://www.docker.com/). It requires [docker-compose](https://github.com/docker/compose).
 
-1. Clone the [ngods repo](https://github.com/zsvoboda/ngods-stocks)
+1. Clone the [ngods repo](https://gitlab.com/b5531/data-lake)
 
 ```bash
-git clone https://github.com/zsvoboda/ngods-stocks.git
+git clone https://gitlab.com/b5531/data-lake
 ```
 
 2. Start the data stack with the `docker-compose up` command
@@ -49,7 +42,7 @@ cd ngods-stocks
 docker-compose up -d
 ```
 
-**NOTE:** This can take quite long depending on your network speed.
+As the commands have been purged from extra data, this should take around 2 minutes.
 
 3. Stop the data stack via the `docker-compose down` command
 
@@ -57,50 +50,19 @@ docker-compose up -d
 docker-compose down
 ```
 
-4. Execute the data pipeline from the Dagster console at http://localhost:3070/ with [this yaml config file](./projects/dagster/e2e.yaml).
+4. Execute the data workspace from the dagit console in [http://localhost:3070/]
 
-![Dagster e2e](./img/demo/dagster.e2e.png)
+![Dagster e2e](./img/stelviotech/dagitpanel.png) 
 
-Cut and paste the content of the [e2e.yaml file](./projects/dagster/e2e.yaml) to this [Dagster UI console page](http://localhost:3070/workspace/workspace@workspace.py/jobs/e2e/playground) and start the data pipeline by clicking the `Launch Run` button. 
+5. Download [DBeaver](https://dbeaver.io/download/) SQL tool.
 
-**NOTE:** You can customize the list of stock symbols that will be downloaded. 
+6. Connect to the Postgres database that contains the `integracion` stage data. Use `jdbc:postgresql://localhost:5432/localhost` JDBC URL with username `trino` and without a password.
 
-5. Review and customize the [cube.dev metrics, and dimensions](./conf/cube/schema/). Test these metrics in the [cube.dev playground](http://localhost:4000/#/build?query={%22measures%22:[%22StockMarketsMonthly.price_close_relative_avg%22],%22timeDimensions%22:[{%22dimension%22:%22StockMarketsMonthly.dt%22,%22granularity%22:%22month%22,%22dateRange%22:[%222014-09-01%22,%222022-07-03%22]}],%22dimensions%22:[%22StockMarketsMonthly.symbol%22],%22filters%22:[{%22member%22:%22StockMarketsMonthly.symbol%22,%22operator%22:%22equals%22,%22values%22:[%22AAPL%22,%22GC=F%22,%22BTC-USD%22]}],%22order%22:[[%22StockMarketsMonthly.symbol%22,%22asc%22],[%22StockMarketsMonthly.dt%22,%22desc%22]]}).
+![Postgres JDBC connection](./img/stelviotech/trinopanel.png) 
 
-![cube.dev playground](./img/demo/cube.playground.png)
+![Trino schemas](./img/stelviotech/trinostructure.png)
 
-See the [cube.dev documentation](https://cube.dev/docs/) for more information.
-
-6. Check out the Metabase [data visualizations](http://localhost:3030/question#eyJkYXRhc2V0X3F1ZXJ5Ijp7InR5cGUiOiJuYXRpdmUiLCJuYXRpdmUiOnsicXVlcnkiOiJzZWxlY3QgXG4gICAgICAgIGR0LCBcbiAgICAgICAgc3ltYm9sLCBcbiAgICAgICAgcHJpY2VfY2xvc2VfcmVsYXRpdmVfYXZnIFxuICAgIGZyb20gU3RvY2tNYXJrZXRzTW9udGhseVxuICAgIHdoZXJlIFxuICAgICAgICBzeW1ib2wgaW4gKCdBQVBMJywgJ0JUQy1VU0QnLCAnR0M9RicpIGFuZCBcbiAgICAgICAgZHQgPj0gJzIwMTQtMDktMDEnXG4gICAgb3JkZXIgYnkgZHQsIHN5bWJvbFxuICAgICIsInRlbXBsYXRlLXRhZ3MiOnt9fSwiZGF0YWJhc2UiOjN9LCJkaXNwbGF5IjoibGluZSIsImRpc3BsYXlJc0xvY2tlZCI6dHJ1ZSwidmlzdWFsaXphdGlvbl9zZXR0aW5ncyI6eyJncmFwaC5kaW1lbnNpb25zIjpbImR0Iiwic3ltYm9sIl0sImdyYXBoLm1ldHJpY3MiOlsicHJpY2VfY2xvc2VfcmVsYXRpdmVfYXZnIl0sImdyYXBoLnhfYXhpcy50aXRsZV90ZXh0IjoiRGF0ZSAobW9udGhzKSIsImdyYXBoLnlfYXhpcy50aXRsZV90ZXh0IjoiQ2xvc2UgcHJpY2UgKHJlbGF0aXZlIHRvIEphbiAxc3QgMjAwMCkifSwib3JpZ2luYWxfY2FyZF9pZCI6MzN9) that is connected to the cube.dev analytical model. You can run [SQL queries](https://cube.dev/docs/backend/sql) on top of the cube.dev schema.  
- 
- Use username `metabase@ngods.com` and password `metabase1`.
-
-![Metabase](./img/metabase.png)
-
-You can create your own data visualizations and dashboards. See the [Metabase documentation](https://metabase.com/docs/latest) for more information.
-
-7. Predict stock close price. Run the [ARIMA time-series prediction model](http://localhost:8888/notebooks/arima.ipynb) notebook that is trained on 29 months of the `Apple:AAPL` stock data and predicts the next month.
-
-![Jupyter ARIMA](./img/jupyter.arima.png)
-
-8. Download [DBeaver](https://dbeaver.io/download/) SQL tool.
-
-9. Connect to the Postgres database that contains the `gold` stage data. Use `jdbc:postgresql://localhost:5432/ngods` JDBC URL with username `ngods` and password `ngods`.
-
-![Postgres JDBC connection](./img/demo/postgres.jdbc.connection.png)
-
-10. Connect to the Trino database that has access to all data stages (`bronze`, `silver`, and `gold` schemas of the `warehouse` database). Use `jdbc:trino://localhost:8060` JDBC URL with username `trino` and password `trino`. 
-
-![Trino JDBC connection](./img/demo/trino.jdbc.connection.png)
-
-![Trino schemas](./img/demo/trino.schemas.png)
-
-11. Connect to the Spark database that is used for data transformations. Use `jdbc:hive2://localhost:10009` JDBC URL with no username and password.
-
-![Spark JDBC connection](./img/demo/spark.jdbc.connection.png)
-
-# Customizing the demo
-This chapter contains useful information for customizing the demo.
+7. Not yet defined (Iceberg conversion)
 
 ## ngods directories
 Here are few distribution's directories that you may need to customize:
@@ -129,11 +91,6 @@ The data stack has the following endpoints
     - `jdbc:trino://localhost:8060` JDBC URL (username `trino` / no password)
 - Postgres
     - `jdbc:postgresql://localhost:5432/ngods` JDBC URL (username `ngods` / password `ngods`)
-- Cube.dev
-    - http://localhost:4000 - cube.dev development UI 
-    - `jdbc:postgresql://localhost:3245/cube` JDBC URL (username `cube` / password `cube`)
-- Metabase
-    - http://localhost:3030 Metabase UI (username `metabase@ngods.com` / password `metabase1`)
 - Dagster
     - http://localhost:3070 - Dagster orchestration UI
 - Minio
@@ -142,79 +99,41 @@ The data stack has the following endpoints
 ## ngods databases: Spark, Trino, and Postgres
 ngods stack includes three database engines: Spark, Trino, and Postgres. Both Spark and Trino have access to Iceberg tables in `warehouse.bronze` and `warehouse.silver` schemas. Trino engine can also access the `analytics.gold` schema in Postgres. Trino can federate queries between the Postgres and Iceberg tables. 
 
-The Spark engine is configured for ELT and pyspark data transformations. 
-
-![Spark](./img/spark.schemas.png)
-
-The Trino engine is configured for data federation between the Iceberg and Postgres tables. Additional  can be [configured](./conf/trino/catalog) as needed. 
-
-![Trino](./img/trino.schemas.png)
-
-The Postgres database has accesses only to the `analytics.gold` schema and it is used for executing analytical queries over the gold data.
-
-## Demo data pipeline
-The demo data pipeline is utilizes the [medallion architecture](https://databricks.com/fr/glossary/medallion-architecture) with `bronze`, `silver`, and `gold` data stages. 
-
-
-![data pipeline](./img/data.pipeline.png)
-
-and consists of the following phases:
-
-1. Data are downloaded from Yahoo Finance REST API to the local Minio bucket ([./data/stage](./data/stage)) using this [Dagster operation](./projects/dagster/download.py).
-2. The downloaded CSV file is loaded to the bronze stage Iceberg tables (warehouse.bronze Spark schema) using dbt models that are executed in Spark ([./projects/dbt/bronze](./projects/dbt/bronze/models/in_yahoo_finance.sql)).
-3. Silver stage Iceberg tables (warehouse.silver Spark schema) are created using dbt models that are executed in Spark ([./projects/dbt/silver](./projects/dbt/silver/models/stock_markets_with_relative_prices.sql)). 
-5. Gold stage Postgres tables (analytics.gold Trino schema) are created using dbt models that are executed in Trino ([./projects/dbt/gold](./projects/dbt/gold/models/stock_markets.sql)).
-
-![DBT models](./img/dbt.models.png)
-
-All data pipeline phases are orchestrated by [Dagster](https://www.dagster.io/) framework. Dagster operations, resources and jobs are defined in the [Dagster project](./projects/dagster/). 
-
-![Dagster console](./img/dagster.console.png)
-
-The pipeline is executed by running the e2e job from the Dagster console at http://localhost:3070/ using [this yaml config file](./projects/dagster/e2e.yaml)
-
-## ngods analytics layer
-ngods includes [cube.dev](https://cube.dev/) for [semantic data model](./conf/cube/schema) and [Metabase](https://www.metabase.com/) for self-service analytics (dashboards, reports, and visualizations).
-
-![Analytics](./img/analytics.png)
-
-Analytical (semantic) model is defined in [cube.dev](https://cube.dev/) and is used for executing analytical queries over the gold data.
-
-![cube.dev](./img/cube.png)
-
-[Metabase](https://www.metabase.com/) is connected to the [cube.dev](https://cube.dev/) via [SQL API](https://cube.dev/docs/backend/sql). End users can use it for self-service creation of dashboards, reports, and data visualizations. [Metabase](https://www.metabase.com/) is also directly connected to the gold schema in the Postgres database.
-
-![Metabase](./img/demo/metabase.cube.connection.png)
-
-## ngods machine learning
-[Jupyter Notebooks](https://jupyter.org/) with Scala, Java and Python backends can be used for machine learning.
-
-![Jupyter](./img/jupyter.arima.png)
-
-# Support
-Create a [github issue](https://github.com/zsvoboda/ngods-stocks/issues) if you have any questions.
-
 # Docker compose modification
-!A la hora de ejecutar la aplicacion, lo haremos de la forma normal y esperable para un docker compose, "docker compose up", las principales modificaciones son, la creacion de imagen de aio ahora incluye un requirements, que nos permite interactuar de forma correcta con dagster y python.
-!Por otra parte la imagen de trino, se ejecuta mediante un dockerfile ya encontrado previamente en el directorio, mas estaba comentada, principalmente se encarga de inicializar correctamente 
+A la hora de ejecutar la aplicacion, lo haremos de la forma normal y esperable para un docker compose, "docker compose up", las principales modificaciones son, la creacion de imagen de aio ahora incluye un requirements, que nos permite interactuar de forma correcta con dagster y python.
+Por otra parte la imagen de trino, se ejecuta mediante un dockerfile ya encontrado previamente en el directorio, mas estaba comentada, principalmente se encarga de inicializar correctamente 
 el catalogo y las cuestiones minimas definidas en trino/conf/trino
-!Por ultimo hemos de mencionar la desaparicion de muchas de las funcionalidades como lo son spark o cube por ejemplo puesto que no aportaban a la creacion efectuada, en consecuencia sus imagenes han sido removidas del docker compose, manteniendo las de mc, minio (esta debido a su posible posterior implementacion), trino, dagster y postgres.
+Por ultimo hemos de mencionar la desaparicion de muchas de las funcionalidades como lo son spark o cube por ejemplo puesto que no aportaban a la creacion efectuada, en consecuencia sus imagenes han sido removidas del docker compose, manteniendo las de mc, minio (esta debido a su posible posterior implementacion), trino, dagster y postgres.
 
 # projects/dagster modification
-!En la carpeta projects/dagster se encuentran los archivos que definen el flujo de trabajo de dagster.
-!Encontramos ademas carpetas como input_files o processed files orientadas a la gestion de los archivos de input recibidos por parte de las distintas
+En la carpeta projects/dagster se encuentran los archivos que definen el flujo de trabajo de dagster.
+Encontramos ademas carpetas como input_files o processed files orientadas a la gestion de los archivos de input recibidos por parte de las distintas
 empresas, por otra parte tenemos launch, donde se generaran archivos de tipo sql con los cuales podremos recrear la base de datos en caso de reiniciar el sistema o una perdida de su estado.
 
+# Trino
+Trino es un motor de consulta SQL distribuido que permite ejecutar consultas analíticas interactivas contra datos de cualquier tamaño. Trino es capaz de unir datos de múltiples fuentes, como bases de datos relacionales, sistemas de archivos locales y remotos, y sistemas de almacenamiento en la nube. Trino es un proyecto de código abierto y es compatible con la mayoría de las herramientas de análisis de datos y visualización de datos.
+
+Ahora, trino forma una parte fundamental del sistema presentado, por ello queremos destacar como funciona la generacion de catalogos.
+
+- Esto se lleva a cabo de manera manual en la carpeta (./trino/conf/trino), alli encontramos desde el formato de creacion de los catalogos hasta las propiedas de nodos o la jvm empleada. Para mas informacion mirar (./trino/conf/trino/Dockerfile)
+
+
 ## workspace.py
-! contiene las distintas funciones y operaciones requeridas para la ejercucion de los distintos flujos de trabajo, como por ejemplo la operacion de descarga de archivos, la operacion de procesamiento de archivos, la operacion de carga de archivos, entre otras.
+Contiene las distintas funciones y operaciones requeridas para la ejercucion de los distintos flujos de trabajo, como por ejemplo la operacion de descarga de archivos, la operacion de procesamiento de archivos, la operacion de carga de archivos, entre otras.
 ### iterate_lib
 itera a traves de los archivos de input_files y ejecuta la operacion de descarga de archivos.
-Esto ultimo se efectua mediante un diccionario, con campos t_Create:valores para mantener un archivo y su tipo de tal forma que luego podamos insertar a la tabla, por otra parte tenemos
-rows, columns y name_file, que como sus nombres indican, son para la posterior generacion de tabla en la base de datos con unas ciertas, filas, columnas y nombre de archivo.
+Esto ultimo se efectua mediante un diccionario, cuyas entradas son: rows, columns, name_file, t_Create todas ellas explicadas enviadas a init que se encargara de gestionar los datos para la creacion de las tablas.
 ### read_files_op
-Funcion encargada de la descarga del archivo.
+- Funcion encargada de la descarga del archivo.
+
+- Itera a traves de las tuplas de una tabla y genera una serie de listas, lista, la cual contiene los valores para la creacion de la tabla, rows, las filas de la tabla y columns, las columnas de la tabla.
 ### identify_string_type
-identica de que valor se trata el string insertado, para determinar que formato tienen los valores a insertar, por ahora incluye, timestamp, bigint, double y varchar.
+identica de que valor se trata el string insertado, para determinar que formato tienen los valores a insertar, por ahora incluye, timestamp, bigint, double y varchar, esto se lleva a cabo con la libreria regex de python (expresiones regulares).
 
 ### init
-Funcion encargada de ligar las anteriores operaciones, con el objetivo de establecer la base de datos.
+Funcion encargada de ligar las anteriores operaciones, con el objetivo de establecer la base de datos, sigue una estructura: Catalogo-schema-tablas.
+- Verifica la existencia de un archivo de persistencia en launch, si no existe, salta directamente a la lectura de excels en input_files. En caso contrario ejecuta todas las queries encontradas en los respectivos archivos dentro de launch.
+- Lectura de diccionarios de tipo:
+    - t_Create: Guarda el tipo de valor de la columna asi como su nombre, para la creacion de la tabla.
+    - Rows, columns y name_file, que como sus nombres indican, son para la posterior generacion de tabla en la base de datos con unas ciertas, filas, columnas y nombre de archivo.
+    - Por ultimo cabe destacar que todas las queries ejecutadas en esta funcion son guardadas en una serie de listas de queries, las cuales se persisten (persist_query_list) en archivos de tipo sql en launch.
