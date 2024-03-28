@@ -1,17 +1,17 @@
-from dagster import job, repository, ModeDefinition
-from dagster_dbt import dbt_cli_resource
-from dagster_pyspark import pyspark_resource
-
 import os
-import pandas as pd
+import re
 import shutil
+from contextlib import contextmanager
 from datetime import datetime
 
-import re
-from dagster import job, op,solid, resource,build_op_context, InputDefinition,pipeline, ModeDefinition, asset
-from trino.dbapi import connect
-from contextlib import contextmanager
+import pandas as pd
+from dagster import (InputDefinition, ModeDefinition, asset, build_op_context,
+                     job, op, pipeline, repository, resource, solid)
 from dagster.utils.yaml_utils import load_yaml_from_path
+from dagster_dbt import dbt_cli_resource
+from dagster_pyspark import pyspark_resource
+from trino.dbapi import connect
+
 
 class TrinoConnection:
 
@@ -120,20 +120,14 @@ def init(context,tables):
                     query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,columns_definition)
                     input_query(conn,query,query_list)
                     columns = str(tables[ele]['columns'])[1:-1].replace("'","")
-                    #context.log.info("{}".format(str(datetime.now()).split(".")[0]))
-                    #context.log.info()
                     current_datetime = str(datetime.now()).split(".")[0]
-                    context.log.info(f"Inserting values {current_datetime}")
-                    # Your SQL query with formatted datetime
                     query = '''insert into my_catalog.integracion.files (table_name, creation) values ('{}',{})'''.format(name,"timestamp" + " '" + current_datetime + "'")
-
-                    #query = '''insert into my_catalog.integracion.files (table_name,creation) values ('{}','{}')'''.format(name, datetime.now())
                     input_query(conn,query,query_list)
-                    for row in tables[ele]['rows']:
-                        values = str(row)[1:-1].replace("nan","0").replace("NaT","Null").replace("Timestamp(","TIMESTAMP ").replace(")","")
-                        #context.log.info(f"Inserting values {values}")
-                        query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,columns,values)
-                        input_query(conn,query,query_list)
+                    with open("/var/lib/ngods/dagster/launch/{}.sql".format(name), "w") as file:
+                        for row in tables[ele]['rows']:
+                            values = str(row)[1:-1].replace("nan","0").replace("NaT","Null").replace("Timestamp(","TIMESTAMP ").replace(")","")
+                            query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,columns,values)
+                            input_query(conn,query,query_list)
                     persist_query_list(query_list,"/var/lib/ngods/dagster/launch/{}.sql".format(name))
             except Exception as e:
                 context.log.error(f'Error creating schema: {e}')

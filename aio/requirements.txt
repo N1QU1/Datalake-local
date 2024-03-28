@@ -1,4 +1,3 @@
 pandas
 openpyxl==3.0.9
-re
 datetime
