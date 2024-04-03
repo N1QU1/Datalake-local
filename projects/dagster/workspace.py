@@ -89,7 +89,6 @@ def identify_string_type(input_string):
         return "Timestamp(0)"
     # Check if it's a double
     elif re.match(decimal_pattern, input_string.replace(",","")) is not None:
-        sp = input_string.split(".")
         return "Double"
     # Check if it's an integer
     elif re.match(integer_pattern, input_string.replace(",","")) is not None:
@@ -98,6 +97,31 @@ def identify_string_type(input_string):
     else:
         return "varchar"
 
+def modify_row_content(row):
+    if "datetime" in row:
+        while "datetime.datetime" in row:
+            numbers = ""
+            n_list = []
+            numbers = row.split("datetime.datetime(")[1].split(")")[0].replace(" ","")
+            n_list = numbers.split(",")
+            orig_nums = n_list.copy()
+            while len(n_list) < 6:
+                n_list.append("00")
+            for i, ele in enumerate(n_list):
+                if ele == "0":
+                    n_list[i]= "00"
+            row = row.replace("datetime.datetime(" + ", ".join(orig_nums) + ")",f"TIMESTAMP '{n_list[0]}-{n_list[1]}-{n_list[2]} {n_list[3]}:{n_list[4]}:{n_list[5]}'",1)
+    return row
+
+def modify_columns(columns,row):
+    if "nan" in row:
+        c_list=columns.split(",")
+        row = row.split(",")
+        for i,ele in enumerate(row):
+            if "nan" in ele:
+                c_list.pop(i)
+        return (", ").join(c_list)
+    return columns
 @op(required_resource_keys={'trino'})
 def init(context,tables):
     query_list = []
@@ -108,43 +132,51 @@ def init(context,tables):
                 open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)    
         if len(tables) != 0:
             try:
-                query = """create schema if not exists my_catalog.integracion"""
-                input_query(conn,query,query_list)
-                query = "create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)"
-                input_query(conn,query,query_list)
-                for ele in tables:
-                    query_list = []
-                    lista = tables[ele]['t_create']
-                    columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
-                    name = tables[ele]['name_file'] + "_" + ele
-                    query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,columns_definition)
-                    input_query(conn,query,query_list)
-                    columns = str(tables[ele]['columns'])[1:-1].replace("'","")
-                    current_datetime = str(datetime.now()).split(".")[0]
-                    query = '''insert into my_catalog.integracion.files (table_name, creation) values ('{}',{})'''.format(name,"timestamp" + " '" + current_datetime + "'")
-                    input_query(conn,query,query_list)
-                    with open("/var/lib/ngods/dagster/launch/{}.sql".format(name), "w") as file:
-                        for row in tables[ele]['rows']:
-                            values = str(row)[1:-1].replace("nan","0").replace("NaT","Null").replace("Timestamp(","TIMESTAMP ").replace(")","")
-                            query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,columns,values)
-                            input_query(conn,query,query_list)
-                    persist_query_list(query_list,"/var/lib/ngods/dagster/launch/{}.sql".format(name))
+                #hay que darle un reformateo a esto porque apesta.
+                with open("/var/lib/ngods/dagster/launch/struct.sql", "a") as f1:
+                    query = """create schema if not exists my_catalog.integracion"""
+                    f1.write(query + "\n")
+                    input_query(conn,query)
+                    query = "create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)"
+                    f1.write(query + "\n")
+                    input_query(conn,query)  
+                    for ele in tables:
+                        query_list = []
+                        lista = tables[ele]['t_create']
+                        columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
+                        name = tables[ele]['name_file'] + "_" + ele
+                        query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,columns_definition)
+                        f1.write(query + "\n")
+                        input_query(conn,query)    
+                        columns = str(tables[ele]['columns'])[1:-1].replace("'","")
+                        current_datetime = str(datetime.now()).split(".")[0]
+                        query = '''insert into my_catalog.integracion.files (table_name, creation) values ('{}',{})'''.format(name,"timestamp" + " '" + current_datetime + "'")
+                        f1.write(query + "\n")
+                        input_query(conn,query)
+                        with open("/var/lib/ngods/dagster/launch/" + name + ".sql", "a") as f2:
+                            for row in tables[ele]['rows']:
+                                #context.log.info(f"Inserting row {row}")
+                                values = str(row)[1:-1].replace("NaT","Null").replace("Timestamp('","TIMESTAMP '").replace("')","'")
+                                row_content = modify_row_content(values)
+                                filtered_columns = modify_columns(columns,row_content)
+                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,filtered_columns,row_content.replace(", nan",""))
+                                input_query(conn,query)
+                                f2.write(query + "\n")
+                            f2.close()
+                       
             except Exception as e:
                 context.log.error(f'Error creating schema: {e}')
     return []
 
-def input_query(conn,query,query_list):
+
+
+
+def input_query(conn,query):
     cursor = conn.cursor()
     cursor.execute(query)
     cursor.fetchall()
     conn.commit()
-    query_list.append(query)
-    return
-
-def persist_query_list(query_list,path):
-    with open(path, "a") as file:
-        for query in query_list:
-            file.write(query + "\n")
+    
     return
 
 def open_persisted_queries(conn,path):
@@ -155,6 +187,7 @@ def open_persisted_queries(conn,path):
             cursor.execute(query)
             cursor.fetchall()
             conn.commit()
+            
 @repository
 def workspace():
     config = {
