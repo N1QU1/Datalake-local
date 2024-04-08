@@ -122,6 +122,7 @@ def modify_columns(columns,row):
                 c_list.pop(i)
         return (", ").join(c_list)
     return columns
+
 @op(required_resource_keys={'trino'})
 def init(context,tables):
     query_list = []
@@ -167,9 +168,6 @@ def init(context,tables):
             except Exception as e:
                 context.log.error(f'Error creating schema: {e}')
     return []
-
-
-
 
 def input_query(conn,query):
     cursor = conn.cursor()

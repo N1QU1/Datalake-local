@@ -79,9 +79,6 @@ services:
       - ./data/spark/notebooks:/var/lib/ngods/notebooks
       - ./projects:/var/lib/ngods
       - ./projects/dbt:/var/lib/ngods/dbt
-      - ./projects/dagster/launch:/var/lib/ngods/dagster/launch
-      - ./projects/dagster/processed_files:/var/lib/ngods/dagster/processed_files
-      - ./projects/dagster/input_files:/var/lib/ngods/dagster/input_files
     ports:
       - '8888:8888' # Spark notebook port
       - '7077:7077' # Spark port
