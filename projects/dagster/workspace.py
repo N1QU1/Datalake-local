@@ -44,7 +44,6 @@ def iterate_lib(context):
         it = {}
         if ele.endswith(".xlsx"):
             for sheet in pd.ExcelFile(path + "/" +str(ele)).sheet_names:
-                context.log.info(f"Reading file {ele} and sheet {str(sheet)}")
                 lista,rows,columns = read_files_op(context,path + "/" +str(ele),str(sheet))
                 if len(lista) != 0:
                     it = {
@@ -55,7 +54,7 @@ def iterate_lib(context):
                     }
                     name = str(ele).replace(".xlsx", "").replace(" ","_")
                     tables[sheet] = it
-        shutil.move(path + "/" + str(ele), "/var/lib/ngods/dagster/processed_files/")
+            #shutil.move(path + "/" + str(ele), "/var/lib/ngods/dagster/processed_files/")
     return tables
             
 def read_files_op(context,path,sheet):
@@ -81,7 +80,7 @@ def read_files_op(context,path,sheet):
 
 def identify_string_type(input_string):
     # Regular expressions for matching different types
-    timestamp_pattern = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$'
+    timestamp_pattern = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
     decimal_pattern = r'^-?[0-9]+(\.[0-9]+)?$'
     integer_pattern = r'^-?[0-9]+$'
     # Check if it's a timestamp
@@ -96,44 +95,17 @@ def identify_string_type(input_string):
     # Otherwise, it's just a string
     else:
         return "varchar"
-
-def modify_row_content(row):
-    if "datetime" in row:
-        while "datetime.datetime" in row:
-            numbers = ""
-            n_list = []
-            numbers = row.split("datetime.datetime(")[1].split(")")[0].replace(" ","")
-            n_list = numbers.split(",")
-            orig_nums = n_list.copy()
-            while len(n_list) < 6:
-                n_list.append("00")
-            for i, ele in enumerate(n_list):
-                if ele == "0":
-                    n_list[i]= "00"
-            row = row.replace("datetime.datetime(" + ", ".join(orig_nums) + ")",f"TIMESTAMP '{n_list[0]}-{n_list[1]}-{n_list[2]} {n_list[3]}:{n_list[4]}:{n_list[5]}'",1)
-    return row
-
-def modify_columns(columns,row):
-    if "nan" in row:
-        c_list=columns.split(",")
-        row = row.split(",")
-        for i,ele in enumerate(row):
-            if "nan" in ele:
-                c_list.pop(i)
-        return (", ").join(c_list)
-    return columns
-
 @op(required_resource_keys={'trino'})
 def init(context,tables):
-    query_list = []
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if os.listdir("/var/lib/ngods/dagster/launch"):
             for ele in os.listdir("/var/lib/ngods/dagster/launch"):
-                open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)    
+                open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)
         if len(tables) != 0:
+            for ele in tables:
+                context.log.info(tables[ele]['name_file'])
             try:
-                #hay que darle un reformateo a esto porque apesta.
                 with open("/var/lib/ngods/dagster/launch/struct.sql", "a") as f1:
                     query = """create schema if not exists my_catalog.integracion"""
                     f1.write(query + "\n")
@@ -142,33 +114,62 @@ def init(context,tables):
                     f1.write(query + "\n")
                     input_query(conn,query)  
                     for ele in tables:
-                        query_list = []
                         lista = tables[ele]['t_create']
                         columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
                         name = tables[ele]['name_file'] + "_" + ele
                         query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,columns_definition)
                         f1.write(query + "\n")
                         input_query(conn,query)    
-                        columns = str(tables[ele]['columns'])[1:-1].replace("'","")
                         current_datetime = str(datetime.now()).split(".")[0]
                         query = '''insert into my_catalog.integracion.files (table_name, creation) values ('{}',{})'''.format(name,"timestamp" + " '" + current_datetime + "'")
                         f1.write(query + "\n")
                         input_query(conn,query)
                         with open("/var/lib/ngods/dagster/launch/" + name + ".sql", "a") as f2:
                             for row in tables[ele]['rows']:
-                                #context.log.info(f"Inserting row {row}")
-                                values = str(row)[1:-1].replace("NaT","Null").replace("Timestamp('","TIMESTAMP '").replace("')","'")
-                                row_content = modify_row_content(values)
-                                filtered_columns = modify_columns(columns,row_content)
-                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,filtered_columns,row_content.replace(", nan",""))
-                                input_query(conn,query)
+                                columns = tables[ele]['columns']
+                                filtered_row,filtered_columns = reformat_rows(row,columns)
+                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,str(filtered_columns).replace("'","")[1:-1],str(filtered_row).replace('"',"")[1:-1])
                                 f2.write(query + "\n")
+                                input_query(conn,query)
                             f2.close()
-                       
             except Exception as e:
                 context.log.error(f'Error creating schema: {e}')
     return []
 
+def reformat_rows(row,columns):
+    row_copy = row.copy()
+    columns_copy = columns.copy()
+    count = 0
+    for pos,ele in enumerate(row):
+        tipo = identify_string_type(str(ele))
+        if tipo == "Timestamp(0)" and not "datetime.datetime" in str(ele) and not "datetime.time" in str(ele):
+            value = "Timestamp '" + str(ele) + "'"
+            row_copy.pop(pos - count)
+            row_copy.insert(pos - count,value)
+        elif tipo == "Timestamp(0)" and "datetime.datetime" in str(ele) and not "datetime.time" in str(ele):
+            value = row_copy.pop(pos - count)
+            numbers = str(value).replace("datetime.datetime(","").replace(")","").split(", ")
+            numbers_copy = numbers.copy()
+            for pos, ele in enumerate(numbers_copy):
+                if ele == "0":
+                    numbers.pop(pos)
+                    numbers.insert(pos,"00")
+            while len(numbers) < 6:
+                numbers.append("00")
+            if len(numbers) > 6:
+                row_copy.insert(pos - count,f"TIMESTAMP '{numbers[0]}-{numbers[1]}-{numbers[2]} {numbers[3]}:{numbers[4]}:{numbers[5]}.{numbers[6]}'")
+            else:
+                row_copy.insert(pos - count,f"TIMESTAMP '{numbers[0]}-{numbers[1]}-{numbers[2]} {numbers[3]}:{numbers[4]}:{numbers[5]}'")
+        elif tipo == "Timestamp(0)" and "datetime.datetime" in str(ele) and  "datetime.time" in str(ele): 
+            row_copy.pop(pos - count)
+            columns_copy.pop(pos - count)
+            count += 1
+        elif tipo == "varchar" and (str(ele) == "nan" or str(ele) == "NaT"):
+            row_copy.pop(pos - count)
+            columns_copy.pop(pos - count)
+            count += 1
+    return row_copy,columns_copy
+        
 def input_query(conn,query):
     cursor = conn.cursor()
     cursor.execute(query)
