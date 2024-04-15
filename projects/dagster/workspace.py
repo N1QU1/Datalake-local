@@ -38,7 +38,6 @@ def trino_resource(init_context):
 def iterate_lib(context):
     
     path = "/var/lib/ngods/dagster/input_files"
-    i = 0
     tables = {}
     for ele in os.listdir(path):
         it = {}
@@ -54,7 +53,7 @@ def iterate_lib(context):
                     }
                     name = str(ele).replace(".xlsx", "").replace(" ","_")
                     tables[sheet] = it
-            #shutil.move(path + "/" + str(ele), "/var/lib/ngods/dagster/processed_files/")
+            shutil.move(path + "/" + str(ele), "/var/lib/ngods/dagster/processed_files/")
     return tables
             
 def read_files_op(context,path,sheet):
@@ -95,13 +94,16 @@ def identify_string_type(input_string):
     # Otherwise, it's just a string
     else:
         return "varchar"
+    
 @op(required_resource_keys={'trino'})
 def init(context,tables):
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if os.listdir("/var/lib/ngods/dagster/launch"):
+            open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/struct.sql")
             for ele in os.listdir("/var/lib/ngods/dagster/launch"):
-                open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)
+                if ele != "struct.sql":
+                    open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)
         if len(tables) != 0:
             for ele in tables:
                 context.log.info(tables[ele]['name_file'])
@@ -160,7 +162,8 @@ def reformat_rows(row,columns):
                 row_copy.insert(pos - count,f"TIMESTAMP '{numbers[0]}-{numbers[1]}-{numbers[2]} {numbers[3]}:{numbers[4]}:{numbers[5]}.{numbers[6]}'")
             else:
                 row_copy.insert(pos - count,f"TIMESTAMP '{numbers[0]}-{numbers[1]}-{numbers[2]} {numbers[3]}:{numbers[4]}:{numbers[5]}'")
-        elif tipo == "Timestamp(0)" and "datetime.datetime" in str(ele) and  "datetime.time" in str(ele): 
+        
+        elif tipo == "Timestamp(0)" and not "datetime.datetime" in str(ele) and  "datetime.time" in str(ele): 
             row_copy.pop(pos - count)
             columns_copy.pop(pos - count)
             count += 1
@@ -168,6 +171,7 @@ def reformat_rows(row,columns):
             row_copy.pop(pos - count)
             columns_copy.pop(pos - count)
             count += 1
+        
     return row_copy,columns_copy
         
 def input_query(conn,query):
