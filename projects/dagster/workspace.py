@@ -100,10 +100,11 @@ def init(context,tables):
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if os.listdir("/var/lib/ngods/dagster/launch"):
-            open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/struct.sql")
-            for ele in os.listdir("/var/lib/ngods/dagster/launch"):
-                if ele != "struct.sql":
-                    open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)
+            if len(os.listdir("/var/lib/ngods/dagster/launch")) > 1:
+                open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/struct.sql")
+                for ele in os.listdir("/var/lib/ngods/dagster/launch"):
+                    if ele != "struct.sql":
+                        open_persisted_queries(conn,"/var/lib/ngods/dagster/launch/" + ele)
         if len(tables) != 0:
             for ele in tables:
                 context.log.info(tables[ele]['name_file'])
