@@ -42,7 +42,7 @@ def iterate_lib(context):
     for ele in os.listdir(path):
         it = {}
         if ele.endswith(".xlsx"):
-            for sheet in pd.ExcelFile(path + "/" +str(ele)).sheet_names:
+            for sheet in pd.ExcelFile(path + "/" +str(ele),engine = 'openpyxl').sheet_names:
                 lista,rows,columns = read_files_op(context,path + "/" +str(ele),str(sheet))
                 if len(lista) != 0:
                     it = {
@@ -52,7 +52,8 @@ def iterate_lib(context):
                         'columns':columns
                     }
                     name = str(ele).replace(".xlsx", "").replace(" ","_")
-                    tables[sheet] = it
+                    
+                    tables[fix_string(sheet)] = it
             shutil.move(path + "/" + str(ele), "/var/lib/ngods/dagster/processed_files/")
     return tables
             
@@ -66,10 +67,8 @@ def read_files_op(context,path,sheet):
             for row in df.itertuples(index = False):
                 rows.append(list(row))
             for nombre_columna,valor_columna in zip(df.iloc[0].index,df.iloc[0]):
-                if "%" in nombre_columna:
-                    nombre_columna = nombre_columna.replace("%","porcentaje_")
-                lista.append([nombre_columna,identify_string_type(str(valor_columna))])
-                columns.append(nombre_columna)
+                lista.append([fix_string(nombre_columna),identify_string_type(str(valor_columna))])
+                columns.append(fix_string(nombre_columna))
             return lista,rows,columns
         else:
             return [],[],[]
@@ -94,7 +93,19 @@ def identify_string_type(input_string):
     # Otherwise, it's just a string
     else:
         return "varchar"
+
+def fix_string(string):
+    special_characters = [
+        ';', '--', '/*', '*/', "'", '"', '\\', '%', '_', '<', '>', '=', '+', '-', '*', '/', '@', '#', '!', '~', '`', '|', '&', '^', '$', '?', '(', ')', '[', ']', '{', '}', ',', '.', ':', ' '
+    ]
+    modi_string = string
+    for char in special_characters:
+        if char == '%':
+            modi_string = modi_string.replace(char, "porcentaje_")
+        else:
+            modi_string = modi_string.replace(char, '_')
     
+    return modi_string
 @op(required_resource_keys={'trino'})
 def init(context,tables):
     trino = context.resources.trino
@@ -149,7 +160,7 @@ def reformat_rows(row,columns):
             value = "Timestamp '" + str(ele) + "'"
             row_copy.pop(pos - count)
             row_copy.insert(pos - count,value)
-        elif tipo == "Timestamp(0)" and "datetime.datetime" in str(ele) and not "datetime.time" in str(ele):
+        elif tipo == "Timestamp(0)" and "datetime.datetime" in str(ele) :
             value = row_copy.pop(pos - count)
             numbers = str(value).replace("datetime.datetime(","").replace(")","").split(", ")
             numbers_copy = numbers.copy()
@@ -164,7 +175,7 @@ def reformat_rows(row,columns):
             else:
                 row_copy.insert(pos - count,f"TIMESTAMP '{numbers[0]}-{numbers[1]}-{numbers[2]} {numbers[3]}:{numbers[4]}:{numbers[5]}'")
         
-        elif tipo == "Timestamp(0)" and not "datetime.datetime" in str(ele) and  "datetime.time" in str(ele): 
+        elif tipo == "Timestamp(0)"  and  "datetime.time" in str(ele): 
             row_copy.pop(pos - count)
             columns_copy.pop(pos - count)
             count += 1
@@ -203,6 +214,12 @@ def workspace():
                     "user": "trino",
                     "password": "",
                 }
+            }
+        }
+        ,
+        "execution": {
+            "gRPC": {
+                "DAGSTER_DAEMON_HEARTBEAT_TOLERANCE": 300  # Ajusta el tiempo de espera en segundos
             }
         }
     }
