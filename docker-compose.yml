@@ -66,8 +66,8 @@ services:
   
   aio:
     #build: aio/
-    #image: answercn/ngods-stocks-aio
-    build: aio/
+    image: answercn/ngods-stocks-aio
+    #build: aio/
     container_name: aio
     environment:
       - AWS_ACCESS_KEY_ID=minio
@@ -78,7 +78,6 @@ services:
       - ./data/stage:/var/lib/ngods/stage
       - ./data/spark/notebooks:/var/lib/ngods/notebooks
       - ./projects:/var/lib/ngods
-      - ./projects/dbt:/var/lib/ngods/dbt
     ports:
       - '8888:8888' # Spark notebook port
       - '7077:7077' # Spark port
