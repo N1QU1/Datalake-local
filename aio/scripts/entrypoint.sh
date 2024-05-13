@@ -13,7 +13,6 @@ start-worker.sh spark://spark:7077 --webui-port 8062
 start-history-server.sh
 # start-thriftserver.sh --hiveconf hive.server2.thrift.port 10000 --hiveconf hive.server2.authentication NOSASL
 ${KYUUBI_HOME}/bin/kyuubi start
-
 # dagster
 cd ${DAGSTER_DIR} && dagit -h 0.0.0.0 -p 3070 &
 

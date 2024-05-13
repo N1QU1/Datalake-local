@@ -25,7 +25,7 @@ defs = Definitions(
     assets=all_assets,
     resources={
         'trino': TrinoConnection(
-            host='trino',
+            host='localhost',
             port=8060,
             user='trino',
             password=''
