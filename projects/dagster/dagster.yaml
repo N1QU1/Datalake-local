@@ -1,3 +1,7 @@
+telemetry:
+  enabled: false
+nux:
+  enabled: false
 local_artifact_storage:
   module: dagster.core.storage.root
   class: LocalArtifactStorage

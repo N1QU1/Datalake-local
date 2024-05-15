@@ -23,7 +23,7 @@ RUN apt-get update && apt-get upgrade -y && \
 WORKDIR ${INSTALL_DIR}
 
 # Install python deps
-COPY conf/requirements.txt .
+COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt \
     && rm requirements.txt
 
