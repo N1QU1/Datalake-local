@@ -5,16 +5,19 @@ import pandas as pd
 import shutil
 
 import re
-from dagster import asset
+from dagster import asset, AssetIn
 
+import json
 
-@asset
-def iterate_lib(context):
-    path = 'C:\\laburo\\assets_stelviotech\\assets\\input_files'
+@asset(group_name="Data_Integration_excel")
+def obtain_data_from_excels(context):
+    """
+    Parses the different files found in input_files, generates the minimum info for init to work
+    """
+    path = 'C:\\laburo\\assets_stelviotech\\input_files'
     i = 0
     tables = {}
     for ele in os.listdir(path):
-        it = {}
         if ele.endswith(".xlsx"):
             for sheet in pd.ExcelFile(path + "/" + str(ele)).sheet_names:
                 context.log.info(f"Reading file {ele} and sheet {str(sheet)}")
@@ -29,9 +32,100 @@ def iterate_lib(context):
                     }
                     tables[i] = it
                     i += 1
-        shutil.move(path + "/" + str(ele), "C:\\laburo\\assets_stelviotech\\assets\\processed_files")
+        shutil.move(path + "/" + str(ele), "C:\\laburo\\assets_stelviotech\\processed_files")
 
     return tables
+
+
+@asset(ins={"tables": AssetIn("obtain_data_from_excels")},
+       group_name="Data_Integration_excel",
+       required_resource_keys={"trino"})
+def transform_data(context, tables):
+    """
+    :param context: the context utilized during the procedure, allows us to obtain resources
+    :param tables: the information passed down from the previous asset
+    Its main function is to generate the tables using dictionaries obtained from iterate_lib, and saving a series
+    of persistence files which we could later use in case of system malfunction
+    """
+    trino = context.resources.trino
+    with trino.get_connection() as conn:
+        if len(tables) != 0:
+            try:
+                with open("C:\\laburo\\assets_stelviotech\\launch\\struct.sql", "a", encoding="UTF-8") as f1:
+                    query = '''create schema if not exists my_catalog.integracion'''
+                    f1.write(query + "\n")
+                    input_query(conn, query)
+                    query = '''create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)'''
+                    f1.write(query + "\n")
+                    input_query(conn, query)
+                    for ele in tables:
+                        lista = tables[ele]['t_create']
+                        columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
+                        name = tables[ele]['name_file'] + "_" + tables[ele]['sheet_name']
+                        query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,
+                                                                                                       columns_definition)
+                        f1.write(query + "\n")
+                        input_query(conn, query)
+                        current_datetime = str(datetime.now()).split(".")[0]
+                        query = '''insert into my_catalog.integracion.files (table_name, creation) values ( '{}', {} )'''.format(
+                            name, "timestamp" + " '" + current_datetime + "'")
+                        f1.write(query + "\n")
+                        input_query(conn, query)
+                        with open("C:\\laburo\\assets_stelviotech\\assets\\launch\\" + name + ".sql", "a", encoding="UTF-8") as f2:
+                            for row in tables[ele]['rows']:
+                                columns = tables[ele]['columns']
+                                filtered_row, filtered_columns = reformat_rows(row, columns)
+                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,
+                                                                                                            str(filtered_columns).replace(
+                                                                                                                "'",
+                                                                                                                "")[
+                                                                                                            1:-1],
+                                                                                                            str(filtered_row).replace(
+                                                                                                                '"',
+                                                                                                                "")[
+                                                                                                            1:-1])
+                                f2.write(query + "\n")
+                                input_query(conn, query)
+                            f2.close()
+            except Exception as e:
+                context.log.error(f'Error creating schema: {e}')
+    return []
+
+
+@asset(group_name="Db_Functions",
+required_resource_keys={"trino"})
+def launch_db_from_files(context):
+    """
+    :param context: context employed during the procedure, allows us to obtain resources
+    Its main objective is to Regenerate the tables using the files stored in launch
+    """
+    trino = context.resources.trino
+    with trino.get_connection() as conn:
+        if os.listdir("C:\\laburo\\assets_stelviotech\\launch"):
+            if len(os.listdir("C:\\laburo\\assets_stelviotech\\launch")) > 1:
+                open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\launch\\struct.sql")
+                for name in os.listdir("C:\\laburo\\assets_stelviotech\\launch"):
+                    if name != "struct.sql":
+                        open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\launch\\" + name)
+    return []
+
+
+@asset(group_name="Data_Integration_json")
+def obtain_data_from_jsons(context):
+    path = 'C:\\laburo\\assets_stelviotech\\input_files'
+    data = []
+    if os.listdir(path):
+        for ele in os.listdir(path):
+            if ele.endswith(".json"):
+                context.log.info(f"Reading file {ele}")
+                json_file = open(ele, "r", encoding="UTF-8")
+                json.load(json_file)
+    return []
+
+
+@asset(group_name="Data_Integration_json")
+def transform_json():
+    return []
 
 
 def read_files_op(context, path, sheet):
@@ -107,62 +201,6 @@ def fix_string(string):
     return modi_string
 
 
-@asset(required_resource_keys={"trino"})
-def init(context, iterate_lib):
-    tables = iterate_lib
-    trino = context.resources.trino
-    with trino.get_connection() as conn:
-        if os.listdir("C:\\laburo\\assets_stelviotech\\assets\\launch"):
-            if len(os.listdir("C:\\laburo\\assets_stelviotech\\assets\\launch")) > 1:
-                open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\assets\\launch\\struct.sql")
-                for name in os.listdir("C:\\laburo\\assets_stelviotech\\assets\\launch"):
-                    if name != "struct.sql":
-                        open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\assets\\launch\\" + name)
-        if len(tables) != 0:
-            for ele in tables:
-                context.log.info(tables[ele]['name_file'])
-            try:
-                with open("C:\\laburo\\assets_stelviotech\\assets\\launch\\struct.sql", "a", encoding="UTF-8") as f1:
-                    query = '''create schema if not exists my_catalog.integracion'''
-                    f1.write(query + "\n")
-                    input_query(conn, query)
-                    query = '''create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)'''
-                    f1.write(query + "\n")
-                    input_query(conn, query)
-                    for ele in tables:
-                        lista = tables[ele]['t_create']
-                        columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
-                        name = tables[ele]['name_file'] + "_" + tables[ele]['sheet_name']
-                        query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,
-                                                                                                       columns_definition)
-                        f1.write(query + "\n")
-                        input_query(conn, query)
-                        current_datetime = str(datetime.now()).split(".")[0]
-                        query = '''insert into my_catalog.integracion.files (table_name, creation) values ( '{}', {} )'''.format(
-                            name, "timestamp" + " '" + current_datetime + "'")
-                        f1.write(query + "\n")
-                        input_query(conn, query)
-                        with open("C:\\laburo\\assets_stelviotech\\assets\\launch\\" + name + ".sql", "a", encoding="UTF-8") as f2:
-                            for row in tables[ele]['rows']:
-                                columns = tables[ele]['columns']
-                                filtered_row, filtered_columns = reformat_rows(row, columns)
-                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,
-                                                                                                            str(filtered_columns).replace(
-                                                                                                                "'",
-                                                                                                                "")[
-                                                                                                            1:-1],
-                                                                                                            str(filtered_row).replace(
-                                                                                                                '"',
-                                                                                                                "")[
-                                                                                                            1:-1])
-                                f2.write(query + "\n")
-                                input_query(conn, query)
-                            f2.close()
-            except Exception as e:
-                context.log.error(f'Error creating schema: {e}')
-    return []
-
-
 def reformat_rows(row, columns):
     row_copy = row.copy()
     columns_copy = columns.copy()
@@ -219,24 +257,3 @@ def open_persisted_queries(conn, path):
             cursor.fetchall()
             conn.commit()
 
-
-""""            
-@repository
-def workspace():
-    config = {
-        "resources": {
-            "trino": {
-                "config": {
-                    "host": "trino",
-                    "port": "8060",
-                    "user": "trino",
-                    "password": "",
-                }
-            }
-        }
-    }
-    resource_config = config.get("resources", {}).get("trino", {}).get("config", {})
-
-    with build_op_context(resources={'trino': trino_resource.configured(resource_config)}) as con:
-        return [init(con,iterate_lib(con))]
-"""
