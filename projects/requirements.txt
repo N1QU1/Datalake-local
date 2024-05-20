@@ -1,9 +1,10 @@
 jupyter==1.0.0
 pandas==1.4.3
 dagster
-dagster-cloud
+dagster-webserver
 pandas
 trino
 dagit
 trino
 pmdarima
+openpyxl

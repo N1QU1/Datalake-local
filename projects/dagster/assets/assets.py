@@ -9,12 +9,13 @@ from dagster import asset, AssetIn
 
 import json
 
+
 @asset(group_name="Data_Integration_excel")
 def obtain_data_from_excels(context):
     """
     Parses the different files found in input_files, generates the minimum info for init to work
     """
-    path = 'C:\\laburo\\assets_stelviotech\\input_files'
+    path = '/opt/dagster/app/input_files'
     i = 0
     tables = {}
     for ele in os.listdir(path):
@@ -32,7 +33,7 @@ def obtain_data_from_excels(context):
                     }
                     tables[i] = it
                     i += 1
-        shutil.move(path + "/" + str(ele), "C:\\laburo\\assets_stelviotech\\processed_files")
+        shutil.move(path + "/" + str(ele), "/opt/dagster/app/processed_files")
 
     return tables
 
@@ -51,7 +52,7 @@ def transform_data(context, tables):
     with trino.get_connection() as conn:
         if len(tables) != 0:
             try:
-                with open("C:\\laburo\\assets_stelviotech\\launch\\struct.sql", "a", encoding="UTF-8") as f1:
+                with open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8") as f1:
                     query = '''create schema if not exists my_catalog.integracion'''
                     f1.write(query + "\n")
                     input_query(conn, query)
@@ -101,31 +102,72 @@ def launch_db_from_files(context):
     """
     trino = context.resources.trino
     with trino.get_connection() as conn:
-        if os.listdir("C:\\laburo\\assets_stelviotech\\launch"):
-            if len(os.listdir("C:\\laburo\\assets_stelviotech\\launch")) > 1:
-                open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\launch\\struct.sql")
-                for name in os.listdir("C:\\laburo\\assets_stelviotech\\launch"):
+        if os.listdir("/opt/dagster/app/launch"):
+            if len(os.listdir("/opt/dagster/app/launch")) > 1:
+                open_persisted_queries(conn, "/opt/dagster/app/launch/struct.sql")
+                for name in os.listdir("/opt/dagster/app/launch"):
                     if name != "struct.sql":
-                        open_persisted_queries(conn, "C:\\laburo\\assets_stelviotech\\launch\\" + name)
+                        open_persisted_queries(conn, "/opt/dagster/app/launch/" + name)
     return []
 
 
 @asset(group_name="Data_Integration_json")
 def obtain_data_from_jsons(context):
-    path = 'C:\\laburo\\assets_stelviotech\\input_files'
-    data = []
+    path = '/opt/dagster/app/input_files'
+    jsons = []
     if os.listdir(path):
         for ele in os.listdir(path):
             if ele.endswith(".json"):
                 context.log.info(f"Reading file {ele}")
-                json_file = open(ele, "r", encoding="UTF-8")
-                json.load(json_file)
-    return []
+                json_file = open(path + "/" + ele, "r", encoding="UTF-8")
+                jsons.append(json.load(json_file))
+    return jsons
 
 
-@asset(group_name="Data_Integration_json")
-def transform_json():
-    return []
+@asset(ins={"jsons": AssetIn("obtain_data_from_jsons")},
+group_name="Data_Integration_json",
+required_resource_keys={"trino"})
+def transform_json(context, jsons):
+    trino = context.resources.trino
+    with trino.get_connection() as conn:
+        max_len = 5
+        tables = []
+        with (open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8")) as struct:
+            for ele in jsons:
+                context.log.info(f"Reading {ele}")
+                company_initials = ""
+                if isinstance(ele['products'][0]['company']['name'], str):
+                    company_name = fix_string(ele['products'][0]['company']['name'])
+                    query = '''create schema if not exists my_catalog.{}'''.format(company_name)
+                    struct.write(query + "\n")
+                    context.log.info(f"First query {query}")
+                    input_query(conn, query)
+                    count = 0
+                    for word in str(company_name).split("_"):
+                        count += 1
+                        if count == max_len:
+                            break
+                        company_initials += word[0]
+                    for workflow in ele['workflowSteps']:
+                        workflow_name = workflow['name']
+                        wds_data_names = []
+                        for workflow_step_data_field in workflow['workflowStepDataFields']:
+                            wds_data_names.append((workflow_step_data_field['name'], workflow_step_data_field[
+                                'workflowDataType']))
+                        if len(wds_data_names) > 0:
+                            table_name = fix_string(company_initials + "_" + workflow_name)
+                            tables.append((table_name, wds_data_names))
+                            query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
+                                                                                                  table_name,
+                                                                                                  apply_column_structure(
+                                                                                                      str(wds_data_names)
+                                                                                                      [1:-1]))
+                            struct.write(query + "\n")
+                            context.log.info(f"Second query {query}")
+                            input_query(conn, query)
+
+    context.log.info("Variable tables contains: {}".format(tables))
+    return tables
 
 
 def read_files_op(context, path, sheet):
@@ -199,6 +241,10 @@ def fix_string(string):
                 modi_string = modi_string.replace('__', '_')
 
     return modi_string
+
+
+def apply_column_structure(string):
+    return string.replace('(', ' ').replace(')', '')
 
 
 def reformat_rows(row, columns):

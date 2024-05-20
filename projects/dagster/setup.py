@@ -5,9 +5,10 @@ setup(
     packages=find_packages(exclude=["assets_tests"]),
     install_requires=[
         "dagster",
-        "dagster-cloud",
+        "dagster-webserver",
         "pandas",
-        "trino"
+        "trino",
+        "openpyxl"
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )
