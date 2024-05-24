@@ -1,40 +1,49 @@
 import os
-from datetime import datetime
-
-import pandas as pd
 import shutil
 
+from datetime import datetime
+import pandas as pd
 import re
-from dagster import asset, AssetIn
 
+from dagster import asset, AssetIn
 import json
 
 
-@asset(group_name="Data_Integration_excel")
+@asset(group_name="Data_Integration_excel",
+       required_resource_keys={"trino"})
 def obtain_data_from_excels(context):
     """
     Parses the different files found in input_files, generates the minimum info for init to work
     """
+    trino = context.resources.trino
     path = '/opt/dagster/app/input_files'
     i = 0
-    tables = {}
-    for ele in os.listdir(path):
-        if ele.endswith(".xlsx"):
-            for sheet in pd.ExcelFile(path + "/" + str(ele)).sheet_names:
-                context.log.info(f"Reading file {ele} and sheet {str(sheet)}")
-                lista, rows, columns = read_files_op(context, path + "/" + str(ele), str(sheet))
-                if len(lista) != 0:
-                    it = {
-                        'name_file': fix_string(ele).replace("xlsx", ""),
-                        'sheet_name': fix_string(sheet),
-                        't_create': lista,
-                        'rows': rows,
-                        'columns': columns
-                    }
-                    tables[i] = it
-                    i += 1
-        shutil.move(path + "/" + str(ele), "/opt/dagster/app/processed_files")
-
+    tables = dict()
+    if os.listdir(path):
+        with trino.get_connection() as conn:
+            with open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8") as f1:
+                query = '''create schema if not exists my_catalog.integracion'''
+                f1.write(query + "\n")
+                input_query(conn, query)
+                query = '''create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)'''
+                f1.write(query + "\n")
+                input_query(conn, query)
+                for ele in os.listdir(path):
+                    if ele.endswith(".xlsx"):
+                        for sheet in pd.ExcelFile(path + "/" + str(ele)).sheet_names:
+                            context.log.info(f"Reading file {ele} and sheet {str(sheet)}")
+                            lista, rows, columns = read_files_op(context, path + "/" + str(ele), str(sheet))
+                            if len(lista) != 0:
+                                name = (fix_string(ele).replace("xlsx", "") + "_" + fix_string(sheet))[0:60]
+                                it = {
+                                    'name': name,
+                                    'rows': rows,
+                                    'columns': columns
+                                }
+                                insert_to_db(conn, lista, name, f1)
+                                tables.update({str(i): it})
+                                i += 1
+                        shutil.move(path + "/" + str(ele), "/opt/dagster/app/processed_files")
     return tables
 
 
@@ -51,50 +60,32 @@ def transform_data(context, tables):
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if len(tables) != 0:
-            try:
-                with open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8") as f1:
-                    query = '''create schema if not exists my_catalog.integracion'''
-                    f1.write(query + "\n")
-                    input_query(conn, query)
-                    query = '''create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)'''
-                    f1.write(query + "\n")
-                    input_query(conn, query)
-                    for ele in tables:
-                        lista = tables[ele]['t_create']
-                        columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
-                        name = tables[ele]['name_file'] + "_" + tables[ele]['sheet_name']
-                        query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,
-                                                                                                       columns_definition)
-                        f1.write(query + "\n")
+            for ele in tables.keys():
+                try:
+                    name = tables[ele]['name']
+                    f2 = open("/opt/dagster/app/launch/" + name + ".sql", "a", encoding="UTF-8")
+                    for row in tables[ele]['rows']:
+                        columns = tables[ele]['columns']
+                        filtered_row, filtered_columns = reformat_rows(row, columns)
+                        query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,
+                                                                                    str(filtered_columns).replace(
+                                                                                        "'",
+                                                                                        "")[
+                                                                                    1:-1],
+                                                                                    str(filtered_row).replace(
+                                                                                        '"',
+                                                                                        "")[
+                                                                                    1:-1])
+                        f2.write(query + "\n")
                         input_query(conn, query)
-                        current_datetime = str(datetime.now()).split(".")[0]
-                        query = '''insert into my_catalog.integracion.files (table_name, creation) values ( '{}', {} )'''.format(
-                            name, "timestamp" + " '" + current_datetime + "'")
-                        f1.write(query + "\n")
-                        input_query(conn, query)
-                        with open("C:\\laburo\\assets_stelviotech\\assets\\launch\\" + name + ".sql", "a", encoding="UTF-8") as f2:
-                            for row in tables[ele]['rows']:
-                                columns = tables[ele]['columns']
-                                filtered_row, filtered_columns = reformat_rows(row, columns)
-                                query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,
-                                                                                                            str(filtered_columns).replace(
-                                                                                                                "'",
-                                                                                                                "")[
-                                                                                                            1:-1],
-                                                                                                            str(filtered_row).replace(
-                                                                                                                '"',
-                                                                                                                "")[
-                                                                                                            1:-1])
-                                f2.write(query + "\n")
-                                input_query(conn, query)
-                            f2.close()
-            except Exception as e:
-                context.log.error(f'Error creating schema: {e}')
+                    f2.close()
+                except Exception as e:
+                    context.log.error(f'Error creating schema: {e}')
     return []
 
 
 @asset(group_name="Db_Functions",
-required_resource_keys={"trino"})
+       required_resource_keys={"trino"})
 def launch_db_from_files(context):
     """
     :param context: context employed during the procedure, allows us to obtain resources
@@ -118,15 +109,14 @@ def obtain_data_from_jsons(context):
     if os.listdir(path):
         for ele in os.listdir(path):
             if ele.endswith(".json"):
-                context.log.info(f"Reading file {ele}")
                 json_file = open(path + "/" + ele, "r", encoding="UTF-8")
                 jsons.append(json.load(json_file))
     return jsons
 
 
 @asset(ins={"jsons": AssetIn("obtain_data_from_jsons")},
-group_name="Data_Integration_json",
-required_resource_keys={"trino"})
+       group_name="Data_Integration_json",
+       required_resource_keys={"trino"})
 def transform_json(context, jsons):
     trino = context.resources.trino
     with trino.get_connection() as conn:
@@ -134,7 +124,6 @@ def transform_json(context, jsons):
         tables = []
         with (open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8")) as struct:
             for ele in jsons:
-                context.log.info(f"Reading {ele}")
                 company_initials = ""
                 if isinstance(ele['products'][0]['company']['name'], str):
                     company_name = fix_string(ele['products'][0]['company']['name'])
@@ -194,7 +183,6 @@ def read_files_op(context, path, sheet):
                 if column_value is None:
                     column_value = 'text'
                 lista.append([corrected_column, identify_string_type(str(column_value))])
-                context.log.info(f"From sheet {sheet} - {column} - {column_value}")
                 columns.append(corrected_column)
             return lista, rows, columns
         else:
@@ -227,21 +215,38 @@ def identify_string_type(input_string):
 
 
 def fix_string(string):
+    special_replacements = {
+        '%': 'porcentaje_',
+        'ñ': 'n',
+        'Ñ': 'N'
+    }
     special_characters = [
-        ';', '--', '/*', '*/', "'", '"', '\\', '%', '_', '<', '>', '=', '+', '-', '*', '/', '@', '#', '!', '~', '`', '|'
+        ';', '--', '/*', '*/', "'", '"', '\\', '%', '_', '<', '>', '=', '+', '-', '*', '/', '@', '#', '!', '~', '`',
+        '|'
         , '&', '^', '$', '?', '(', ')', '[', ']', '{', '}', ',', '.', ':', ' '
     ]
-    modi_string = string
-    for char in special_characters:
-        if char == '%':
-            modi_string = modi_string.replace(char, "porcentaje_")
+
+    # Create a set for quick lookup
+    special_char_set = set(special_characters)
+
+    # Build the final string using a list for better performance
+    result = []
+    for char in string:
+        if char in special_replacements:
+            result.append(special_replacements[char])
+        elif char in special_char_set:
+            result.append('_')
         else:
-            modi_string = modi_string.replace(char, '_')
-            if '__' in modi_string:
-                modi_string = modi_string.replace('__', '_')
+            result.append(char)
 
-    return modi_string
+    # Join the list into a string
+    final_string = ''.join(result)
 
+    # Replace any double underscores with a single underscore
+    while '__' in final_string:
+        final_string = final_string.replace('__', '_')
+
+    return final_string
 
 def apply_column_structure(string):
     return string.replace('(', ' ').replace(')', '')
@@ -303,3 +308,15 @@ def open_persisted_queries(conn, path):
             cursor.fetchall()
             conn.commit()
 
+
+def insert_to_db(conn, lista, name, f1):
+    columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
+    query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,
+                                                                                   columns_definition)
+    f1.write(query + "\n")
+    input_query(conn, query)
+    current_datetime = str(datetime.now()).split(".")[0]
+    query = '''insert into my_catalog.integracion.files (table_name, creation) values ( '{}', {} )'''.format(
+        name, "timestamp" + " '" + current_datetime + "'")
+    f1.write(query + "\n")
+    input_query(conn, query)

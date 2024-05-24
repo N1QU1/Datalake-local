@@ -47,7 +47,7 @@ services:
 
   postgres:
     #image: postgres
-    image: answercn/postgres
+    image: postgres
     hostname: postgres
     container_name: postgres
     environment:
@@ -86,11 +86,18 @@ services:
           - dagster
           - dbt
           - aio
+    volumes:
+      - ./projects/dagster/input_files:/opt/dagster/app/input_files
+      - ./projects/dagster/processed_files:/opt/dagster/app/processed_files
+      - ./projects/dagster/launch:/opt/dagster/app/launch
+      - ./projects/dagster/assets:/opt/dagster/app/assets
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+
+
   trino:
     build: trino/
     container_name: trino
