@@ -170,7 +170,7 @@ def read_files_op(context, path, sheet):
                 "nan", "NULL", ''
             ]
             for row in df.itertuples(index=False):
-                rows.append(list(row))
+                rows.append([str(value) for value in row])
             all_columns = df.columns.tolist()
             for column in all_columns:
                 column_array = df[column].tolist()
@@ -195,19 +195,10 @@ def read_files_op(context, path, sheet):
 def identify_string_type(input_string):
     # Regular expressions for matching different types
     timestamp_pattern = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
-    decimal_pattern = r'^[0-9]+(\.[0-9]+)$'
-    integer_pattern = r'^[0-9]+$'
     boolean_patterns = ['true', 'True', 'TRUE', 'False', 'false', 'FALSE']
     # Check if it's a timestamp
     if re.match(timestamp_pattern, input_string) is not None:
         return "Timestamp(0)"
-    # Check if it's a double
-    elif re.match(decimal_pattern, input_string.replace(",", "")) is not None:
-        return "Decimal"
-    # Check if it's an integer
-    elif re.match(integer_pattern, input_string.replace(",", "")) is not None:
-        return "bigint"
-    # Otherwise, it's just a string
     elif input_string.replace(",", "") in boolean_patterns:
         return "boolean"
     else:
