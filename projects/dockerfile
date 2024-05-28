@@ -17,5 +17,6 @@ COPY dagster/. /opt/dagster/app/
 
 expose 8060
 expose 3000
+expose 9000
 
 ENTRYPOINT ["dagster-webserver", "-w", "/opt/dagster/app/workspace.yaml", "-h", "0.0.0.0"]

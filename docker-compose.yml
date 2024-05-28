@@ -24,27 +24,25 @@ services:
       retries: 5
 
   mc:
-    #image: minio/mc
-    image: answercn/mc
+    image: minio/mc
     container_name: mc
     hostname: mc
     environment:
       - AWS_ACCESS_KEY_ID=minio
       - AWS_SECRET_ACCESS_KEY=minio123
-      - AWS_REGION=us-east-1
+      - AWS_REGION=us-west-1
     networks:
       - ndsnet
     entrypoint: >
       /bin/sh -c "
       until (/usr/bin/mc config host add minio http://minio:9000 minio minio123) do echo '...waiting...' && sleep 1; done;
-      /usr/bin/mc mb minio/warehouse;
-      /usr/bin/mc policy set public minio/warehouse;
+      /usr/bin/mc mb minio/launch;
+      /usr/bin/mc policy set public minio/launch;
       exit 0;
-      "    
+      "
     depends_on:
       minio:
-        condition: service_healthy  
-
+        condition: service_healthy
   postgres:
     #image: postgres
     image: postgres

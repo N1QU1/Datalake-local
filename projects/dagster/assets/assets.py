@@ -8,6 +8,8 @@ import re
 from dagster import asset, AssetIn
 import json
 
+from minio import Minio
+from minio.error import S3Error
 
 @asset(group_name="Data_Integration_excel",
        required_resource_keys={"trino"})
@@ -16,6 +18,7 @@ def obtain_data_from_excels(context):
     Parses the different files found in input_files, generates the minimum info for init to work
     """
     trino = context.resources.trino
+    minio_cli = init_minio_server(9000, "minio", "minio123")
     path = '/opt/dagster/app/input_files'
     i = 0
     tables = dict()
@@ -239,6 +242,7 @@ def fix_string(string):
 
     return final_string
 
+
 def apply_column_structure(string):
     return string.replace('(', ' ').replace(')', '')
 
@@ -311,3 +315,13 @@ def insert_to_db(conn, lista, name, f1):
         name, "timestamp" + " '" + current_datetime + "'")
     f1.write(query + "\n")
     input_query(conn, query)
+
+
+def init_minio_server(port: int, name: str, password: str):
+    client = Minio(
+        f"host.docker.internal:{port}",
+        access_key=name,
+        secret_key=password,
+        secure=False
+    )
+    return client
