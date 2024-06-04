@@ -10,6 +10,14 @@ import json
 
 from minio import Minio
 from minio.error import S3Error
+from minio.commonconfig import CopySource
+
+from io import BytesIO
+
+import tempfile
+
+from trino.exceptions import TrinoUserError
+
 
 @asset(group_name="Data_Integration_excel",
        required_resource_keys={"trino"})
@@ -19,34 +27,53 @@ def obtain_data_from_excels(context):
     """
     trino = context.resources.trino
     minio_cli = init_minio_server(9000, "minio", "minio123")
-    path = '/opt/dagster/app/input_files'
     i = 0
     tables = dict()
-    if os.listdir(path):
-        with trino.get_connection() as conn:
-            with open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8") as f1:
-                query = '''create schema if not exists my_catalog.integracion'''
-                f1.write(query + "\n")
-                input_query(conn, query)
-                query = '''create table if not exists my_catalog.integracion.files (table_name varchar,creation TIMESTAMP)'''
-                f1.write(query + "\n")
-                input_query(conn, query)
-                for ele in os.listdir(path):
-                    if ele.endswith(".xlsx"):
-                        for sheet in pd.ExcelFile(path + "/" + str(ele)).sheet_names:
-                            context.log.info(f"Reading file {ele} and sheet {str(sheet)}")
-                            lista, rows, columns = read_files_op(context, path + "/" + str(ele), str(sheet))
-                            if len(lista) != 0:
-                                name = (fix_string(ele).replace("xlsx", "") + "_" + fix_string(sheet))[0:60]
-                                it = {
-                                    'name': name,
-                                    'rows': rows,
-                                    'columns': columns
-                                }
-                                insert_to_db(conn, lista, name, f1)
-                                tables.update({str(i): it})
-                                i += 1
-                        shutil.move(path + "/" + str(ele), "/opt/dagster/app/processed_files")
+    try:
+        buckets = minio_cli.list_buckets()
+        if len(buckets) > 0:
+            with (trino.get_connection() as conn):
+                if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
+                    create_info_table(conn)
+                for bucket in buckets:
+                    if 'processed' not in bucket.name and 'json' not in bucket.name:
+                        fixed_bucket_name = fix_string(bucket.name)
+                        context.log.info(f"Processing files in bucket: {fixed_bucket_name}")
+                        if len(check_tables_in_schema(conn, f"my_catalog.{fixed_bucket_name}")) == 0:
+                            query = f'''create schema if not exists my_catalog.{fixed_bucket_name}'''
+                            input_query(conn, query)
+                        # Obtener la lista de objetos en el bucket
+                        objects = minio_cli.list_objects(bucket.name, recursive=True)
+                        for obj in objects:
+                            if obj.object_name.endswith(".xlsx"):
+                                # Leer el contenido del archivo Excel
+                                file_data = minio_cli.get_object(bucket.name, obj.object_name)
+                                excel_data = file_data.read()
+                                # Crear un objeto BytesIO a partir del contenido del archivo
+                                file_stream = BytesIO(excel_data)
+                                # Leer el archivo Excel y procesar su contenido
+                                for sheet in pd.ExcelFile(file_stream).sheet_names:
+                                    context.log.info(f"Reading file {obj.object_name} and sheet {str(sheet)}")
+                                    lista, rows, columns = read_files_op(context, file_stream,
+                                                                         str(sheet))  # Función para leer archivos Excel
+                                    if len(lista) != 0:
+                                        name = (fix_string(obj.object_name).replace("xlsx", "") + "_" + fix_string(
+                                            sheet))[0:60]
+                                        it = {
+                                            'name': name,
+                                            'bucket_name': fixed_bucket_name,
+                                            'rows': rows,
+                                            'columns': columns
+                                        }
+                                        # Función para insertar datos en la base de datos
+                                        insert_table_to_db(conn, lista, name, fixed_bucket_name)
+                                        tables.update({str(i): it})
+                                        i += 1
+                                # Mover el archivo procesado a una carpeta diferente
+                                minio_mv(minio_cli, bucket.name, obj)
+
+    except S3Error as e:
+        print("Error:", e)
     return tables
 
 
@@ -66,54 +93,40 @@ def transform_data(context, tables):
             for ele in tables.keys():
                 try:
                     name = tables[ele]['name']
-                    f2 = open("/opt/dagster/app/launch/" + name + ".sql", "a", encoding="UTF-8")
+                    bucket = tables[ele]['bucket_name']
                     for row in tables[ele]['rows']:
                         columns = tables[ele]['columns']
                         filtered_row, filtered_columns = reformat_rows(row, columns)
-                        query = '''insert into my_catalog.integracion.{} ({}) values ({})'''.format(name,
-                                                                                    str(filtered_columns).replace(
-                                                                                        "'",
-                                                                                        "")[
-                                                                                    1:-1],
-                                                                                    str(filtered_row).replace(
-                                                                                        '"',
-                                                                                        "")[
-                                                                                    1:-1])
-                        f2.write(query + "\n")
+                        query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(bucket, name,
+                                                                                           str(filtered_columns).replace(
+                                                                                               "'",
+                                                                                               "")[
+                                                                                           1:-1],
+                                                                                           str(filtered_row).replace(
+                                                                                               '"',
+                                                                                               "")[
+                                                                                           1:-1])
                         input_query(conn, query)
-                    f2.close()
                 except Exception as e:
                     context.log.error(f'Error creating schema: {e}')
     return []
 
 
-@asset(group_name="Db_Functions",
-       required_resource_keys={"trino"})
-def launch_db_from_files(context):
-    """
-    :param context: context employed during the procedure, allows us to obtain resources
-    Its main objective is to Regenerate the tables using the files stored in launch
-    """
-    trino = context.resources.trino
-    with trino.get_connection() as conn:
-        if os.listdir("/opt/dagster/app/launch"):
-            if len(os.listdir("/opt/dagster/app/launch")) > 1:
-                open_persisted_queries(conn, "/opt/dagster/app/launch/struct.sql")
-                for name in os.listdir("/opt/dagster/app/launch"):
-                    if name != "struct.sql":
-                        open_persisted_queries(conn, "/opt/dagster/app/launch/" + name)
-    return []
-
-
 @asset(group_name="Data_Integration_json")
 def obtain_data_from_jsons(context):
-    path = '/opt/dagster/app/input_files'
+    minio_cli = init_minio_server(9000, "minio", "minio123")
+    buckets = minio_cli.list_buckets()
     jsons = []
-    if os.listdir(path):
-        for ele in os.listdir(path):
-            if ele.endswith(".json"):
-                json_file = open(path + "/" + ele, "r", encoding="UTF-8")
-                jsons.append(json.load(json_file))
+    for bucket in buckets:
+        if 'json' in bucket.name and not 'processed' in bucket.name:
+            objects = minio_cli.list_objects(bucket.name, recursive=True)
+            for obj in objects:
+                if obj.object_name.endswith(".json"):
+                    file_data = minio_cli.get_object(bucket.name, obj.object_name)
+                    json_data = json.loads(file_data.read())
+                    jsons.append(json_data)
+                    minio_mv(minio_cli, bucket.name, obj)
+
     return jsons
 
 
@@ -124,42 +137,31 @@ def transform_json(context, jsons):
     trino = context.resources.trino
     with trino.get_connection() as conn:
         max_len = 5
-        tables = []
-        with (open("/opt/dagster/app/launch/struct.sql", "a", encoding="UTF-8")) as struct:
-            for ele in jsons:
-                company_initials = ""
-                if isinstance(ele['products'][0]['company']['name'], str):
-                    company_name = fix_string(ele['products'][0]['company']['name'])
-                    query = '''create schema if not exists my_catalog.{}'''.format(company_name)
-                    struct.write(query + "\n")
-                    context.log.info(f"First query {query}")
-                    input_query(conn, query)
-                    count = 0
-                    for word in str(company_name).split("_"):
-                        count += 1
-                        if count == max_len:
-                            break
-                        company_initials += word[0]
-                    for workflow in ele['workflowSteps']:
-                        workflow_name = workflow['name']
-                        wds_data_names = []
-                        for workflow_step_data_field in workflow['workflowStepDataFields']:
-                            wds_data_names.append((workflow_step_data_field['name'], workflow_step_data_field[
-                                'workflowDataType']))
-                        if len(wds_data_names) > 0:
-                            table_name = fix_string(company_initials + "_" + workflow_name)
-                            tables.append((table_name, wds_data_names))
-                            query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
-                                                                                                  table_name,
-                                                                                                  apply_column_structure(
-                                                                                                      str(wds_data_names)
-                                                                                                      [1:-1]))
-                            struct.write(query + "\n")
-                            context.log.info(f"Second query {query}")
-                            input_query(conn, query)
+        for ele in jsons:
+            company_initials = ""
+            if isinstance(ele['products'][0]['company']['name'], str):
+                company_name = fix_string(ele['products'][0]['company']['name'])
+                query = '''create schema if not exists my_catalog.{}'''.format(company_name)
+                input_query(conn, query)
+                count = 0
+                for word in str(company_name).split("_"):
+                    count += 1
+                    if count == max_len:
+                        break
+                    company_initials += word[0]
+                for workflow in ele['workflowSteps']:
+                    workflow_name = workflow['name']
+                    wds_data_names = ''
+                    for workflow_step_data_field in workflow['workflowStepDataFields']:
+                        wds_data_names += workflow_step_data_field['name'] + " " + to_sql(workflow_step_data_field['workflowDataType']) + ", "
+                        table_name = fix_string(company_initials + "_" + workflow_name)
+                    if len(wds_data_names) > 0:
+                        query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
+                                                                                              table_name,
+                                                                                              (str(wds_data_names[:-2])))
 
-    context.log.info("Variable tables contains: {}".format(tables))
-    return tables
+                        input_query(conn, query)
+    return []
 
 
 def read_files_op(context, path, sheet):
@@ -193,6 +195,21 @@ def read_files_op(context, path, sheet):
     except Exception as e:
         context.log.error(f"Error al leer el archivo {path}: {str(e)}")
         raise e
+
+
+def to_sql(string: str):
+    study = string.lower()
+    if study is "number":
+        return "bigint"
+    elif study is "date":
+        return "date"
+    else:
+        return "varchar"
+
+
+def minio_mv(minio_cli, bucket_name, obj):
+    minio_cli.copy_object(f"processed-{bucket_name}", obj.object_name, CopySource(bucket_name, obj.object_name))
+    minio_cli.remove_object(bucket_name, obj.object_name)
 
 
 def identify_string_type(input_string):
@@ -243,10 +260,6 @@ def fix_string(string):
     return final_string
 
 
-def apply_column_structure(string):
-    return string.replace('(', ' ').replace(')', '')
-
-
 def reformat_rows(row, columns):
     row_copy = row.copy()
     columns_copy = columns.copy()
@@ -294,6 +307,30 @@ def input_query(conn, query):
     return
 
 
+def check_tables_in_schema(conn, schema):
+    try:
+        query = f"""SHOW TABLES FROM {schema}"""
+        cursor = conn.cursor()
+        cursor.execute(query)
+        tables = cursor.fetchall()
+        conn.commit()
+    except TrinoUserError as e:
+        return []
+    return tables
+
+
+def check_schemas_in_catalog(conn, catalog):
+    try:
+        query = f"""SHOW schemas FROM {catalog}"""
+        cursor = conn.cursor()
+        cursor.execute(query)
+        tables = cursor.fetchall()
+        conn.commit()
+    except TrinoUserError as e:
+        return []
+    return tables
+
+
 def open_persisted_queries(conn, path):
     with open(path, "r", encoding="UTF-8") as file:
         f = file.read()
@@ -304,16 +341,22 @@ def open_persisted_queries(conn, path):
             conn.commit()
 
 
-def insert_to_db(conn, lista, name, f1):
-    columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
-    query = '''create table if not exists my_catalog.integracion.{} ({})'''.format(name,
-                                                                                   columns_definition)
-    f1.write(query + "\n")
-    input_query(conn, query)
+def insert_table_to_db(conn, lista, name, bucket):
     current_datetime = str(datetime.now()).split(".")[0]
-    query = '''insert into my_catalog.integracion.files (table_name, creation) values ( '{}', {} )'''.format(
-        name, "timestamp" + " '" + current_datetime + "'")
-    f1.write(query + "\n")
+    columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
+
+    query = '''create table if not exists my_catalog.{}.{} ({})'''.format(bucket, name,
+                                                                                   columns_definition)
+    input_query(conn, query)
+    query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
+        bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
+    input_query(conn, query)
+
+
+def create_info_table(conn):
+    query = '''create schema if not exists my_catalog.info'''
+    input_query(conn, query)
+    query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
     input_query(conn, query)
 
 
@@ -325,3 +368,6 @@ def init_minio_server(port: int, name: str, password: str):
         secure=False
     )
     return client
+
+
+

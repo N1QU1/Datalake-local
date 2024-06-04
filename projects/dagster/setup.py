@@ -8,7 +8,8 @@ setup(
         "dagster-webserver",
         "pandas",
         "trino",
-        "openpyxl"
+        "openpyxl",
+        "minio"
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )
