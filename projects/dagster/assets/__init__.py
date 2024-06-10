@@ -1,4 +1,5 @@
-from dagster import Definitions, load_assets_from_modules, ConfigurableResource
+from dagster import (Definitions, load_assets_from_modules, ConfigurableResource, define_asset_job, AssetSelection,
+                     ScheduleDefinition)
 from trino.dbapi import connect
 from . import assets
 from contextlib import contextmanager
@@ -29,5 +30,27 @@ defs = Definitions(
             user='trino',
             password=''
         )
-    }
+    },
+    jobs=[
+        define_asset_job(
+            name='Insert_excel_tables',
+            selection=AssetSelection.groups('Data_Integration_excel'),
+        ),
+        define_asset_job(
+            name="Insert_json_tables",
+            selection=AssetSelection.groups('Data_Integration_json'),
+        )
+    ],
+    schedules=[
+        ScheduleDefinition(
+            name='Periodic_insert',
+            job_name='Insert_excel_tables',
+            cron_schedule='*/30 * * * *',
+        ),
+        ScheduleDefinition(
+            name='Json_insertion',
+            job_name='Insert_json_tables',
+            cron_schedule='*/2 * * * *',
+        )
+    ]
 )

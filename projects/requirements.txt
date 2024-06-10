@@ -1,6 +1,5 @@
 pandas==1.4.3
 dagster
-dagster-webserver
 pandas
 trino
 dagit

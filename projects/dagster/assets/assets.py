@@ -14,8 +14,6 @@ from minio.commonconfig import CopySource
 
 from io import BytesIO
 
-import tempfile
-
 from trino.exceptions import TrinoUserError
 
 
@@ -71,9 +69,10 @@ def obtain_data_from_excels(context):
                                         i += 1
                                 # Mover el archivo procesado a una carpeta diferente
                                 minio_mv(minio_cli, bucket.name, obj)
-
+                                conn.commit()
     except S3Error as e:
         print("Error:", e)
+        return tables
     return tables
 
 
@@ -109,6 +108,8 @@ def transform_data(context, tables):
                         input_query(conn, query)
                 except Exception as e:
                     context.log.error(f'Error creating schema: {e}')
+                    return []
+            conn.commit()
     return []
 
 
@@ -126,7 +127,6 @@ def obtain_data_from_jsons(context):
                     json_data = json.loads(file_data.read())
                     jsons.append(json_data)
                     minio_mv(minio_cli, bucket.name, obj)
-
     return jsons
 
 
@@ -137,30 +137,36 @@ def transform_json(context, jsons):
     trino = context.resources.trino
     with trino.get_connection() as conn:
         max_len = 5
-        for ele in jsons:
-            company_initials = ""
-            if isinstance(ele['products'][0]['company']['name'], str):
-                company_name = fix_string(ele['products'][0]['company']['name'])
-                query = '''create schema if not exists my_catalog.{}'''.format(company_name)
-                input_query(conn, query)
-                count = 0
-                for word in str(company_name).split("_"):
-                    count += 1
-                    if count == max_len:
-                        break
-                    company_initials += word[0]
-                for workflow in ele['workflowSteps']:
-                    workflow_name = workflow['name']
-                    wds_data_names = ''
-                    for workflow_step_data_field in workflow['workflowStepDataFields']:
-                        wds_data_names += workflow_step_data_field['name'] + " " + to_sql(workflow_step_data_field['workflowDataType']) + ", "
-                        table_name = fix_string(company_initials + "_" + workflow_name)
-                    if len(wds_data_names) > 0:
-                        query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
-                                                                                              table_name,
-                                                                                              (str(wds_data_names[:-2])))
+        try:
+            for ele in jsons:
+                company_initials = ""
+                if isinstance(ele['products'][0]['company']['name'], str):
+                    company_name = fix_string(ele['products'][0]['company']['name'])
+                    query = '''create schema if not exists my_catalog.{}'''.format(company_name)
+                    input_query(conn, query)
+                    count = 0
+                    for word in str(company_name).split("_"):
+                        count += 1
+                        if count == max_len:
+                            break
+                        company_initials += word[0]
+                    workflow_steps = ele['workflowSteps']
+                    for workflow in workflow_steps:
+                        workflow_name = workflow['name']
+                        wds_data_names = ''
+                        for workflow_step_data_field in workflow['workflowStepDataFields']:
+                            name = workflow_step_data_field['name']
+                            data_type = workflow_step_data_field['workflowDataType']
+                            wds_data_names += name + " " + to_sql(data_type) + ", "
+                            table_name = fix_string(company_initials + "_" + workflow_name)
+                        if len(wds_data_names) > 0:
+                            query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
+                                                                                                  table_name,
+                                                                                                  (str(wds_data_names[:-2])))
 
-                        input_query(conn, query)
+                            input_query(conn, query)
+        except KeyError as e:
+            context.log.error(f'Error creating schema: {e}')
     return []
 
 
@@ -215,12 +221,9 @@ def minio_mv(minio_cli, bucket_name, obj):
 def identify_string_type(input_string):
     # Regular expressions for matching different types
     timestamp_pattern = r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
-    boolean_patterns = ['true', 'True', 'TRUE', 'False', 'false', 'FALSE']
     # Check if it's a timestamp
     if re.match(timestamp_pattern, input_string) is not None:
         return "Timestamp(0)"
-    elif input_string.replace(",", "") in boolean_patterns:
-        return "boolean"
     else:
         return "varchar"
 
@@ -302,8 +305,6 @@ def reformat_rows(row, columns):
 def input_query(conn, query):
     cursor = conn.cursor()
     cursor.execute(query)
-    cursor.fetchall()
-    conn.commit()
     return
 
 
