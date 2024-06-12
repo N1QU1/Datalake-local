@@ -6,99 +6,78 @@ This repository contains a stock market analysis demo of the ngods data stack. T
 3. Generacion de archivos, launch, para mantener el estado de la base de datos.
 
 
-The demo is packaged as [docker-compose](https://github.com/docker/compose) script that downloads, installs, and runs all components of the data stack.
-
-## UPDATES
-- 2023-02-03: 
-    - Upgrade to Apache Iceberg 1.1.0
-    - Upgrade to Trino 406
-    - Migrated to the new JDBC catalog (removed the heavyweigt Hive Metastore)
+La demo está empaquetada como un script [docker-compose](https://github.com/docker/compose) que descarga, instala y ejecuta todos los componentes de la pila de datos.
 
 # ngods
-ngods stands for New Generation Opensource Data Stack. It includes the following components: 
+ngods son las siglas de New Generation Opensource Data Stack. Incluye los siguientes componentes: 
 
-- [Apache Spark](https://spark.apache.org) for data transformation (This has been removed from the demo, but in case we wanted a transformation to iceberg format, we would reemploy it)
-- [Apache Iceberg](https://iceberg.apache.org) as a data storage format 
-- [Trino](https://trino.io/) for federated data query 
-- [Dagster](https://dagster.io/) for data orchestration 
-- [Minio](https://min.io) for local S3 storage 
+- [Apache Spark](https://spark.apache.org) para la transformación de datos (Se ha eliminado de la demo, pero en caso de que quisiéramos una transformación a formato iceberg, volveríamos a emplearlo)
+- [Apache Iceberg](https://iceberg.apache.org) como formato de almacenamiento de datos 
+- Trino](https://trino.io/) para la consulta federada de datos 
+- Dagster://dagster.io/) para la orquestación de datos 
+- Minio](https://min.io) para el almacenamiento local en S3 
 
-ngods is open-sourced under a [BSD license](https://github.com/zsvoboda/ngods-stocks/blob/main/LICENSE) and it is distributed as a docker-compose script that supports Intel and ARM architectures.
+ngods es de código abierto bajo una [licencia BSD](https://github.com/zsvoboda/ngods-stocks/blob/main/LICENSE) y se distribuye como un script docker-compose que soporta arquitecturas Intel y ARM.
 
-# Running the demo
-ngods requires a machine with at least 16GB RAM and Intel or Arm 64 CPU running [Docker](https://www.docker.com/). It requires [docker-compose](https://github.com/docker/compose).
+# Ejecución de la demo
+ngods requiere una máquina con al menos 16GB RAM y CPU Intel o Arm 64 ejecutando [Docker](https://www.docker.com/). Requiere [docker-compose](https://github.com/docker/compose).
 
-1. Clone the [ngods repo](https://gitlab.com/b5531/data-lake)
+1. Clone el [Datalake repo](https://gitlab.com/b5531/data-lake)
 
 ```bash
 git clone https://gitlab.com/b5531/data-lake
 ```
 
-2. Start the data stack with the `docker-compose up` command
+2. Inicia la pila de datos con el comando `docker-compose up`.
 
 ```bash
-cd ngods-stocks
+cd datalake
 
 docker-compose up -d
 ```
 
-As the commands have been purged from extra data, this should take around 2 minutes.
+Como los comandos han sido purgados de datos extra, esto debería tomar alrededor de 2-4 minutos, cuando se ejecuta debido a Trino
+actualizaciones, los comandos pueden no estar disponibles hasta las 17:00 hora española.
 
-3. Stop the data stack via the `docker-compose down` command
+3. Detenga la pila de datos mediante el comando `docker-compose down
 
 ```bash
 docker-compose down
 ```
 
-4. Execute the data workspace from the dagit console in [http://localhost:3070/]
+4. Ejecute el espacio de trabajo de datos desde la consola dagit en [http://localhost:3070/]
 
-![Dagster e2e](./img/stelviotech/dagitpanel.png) 
+![Dagster e2e](./img/stelviotech/datapanel.png) 
 
-5. Download [DBeaver](https://dbeaver.io/download/) SQL tool.
+5. Descargue [Datagrip](https://www.jetbrains.com/es-es/datagrip/download/#section=windows) o cualquier herramienta SQL.
 
-6. Connect to the Postgres database that contains the `integracion` stage data. Use `jdbc:postgresql://localhost:5432/localhost` JDBC URL with username `trino` and without a password.
+6. Conéctese a la base de datos Postgres que contiene los datos de la etapa `integracion`. Utilice `jdbc:postgresql://localhost:5432/localhost` JDBC URL con el nombre de usuario `trino` y sin contraseña.
 
-![Postgres JDBC connection](./img/stelviotech/trinopanel.png) 
+![Conexión Postgres JDBC](./img/stelviotech/trinopanel.png) 
 
-![Trino schemas](./img/stelviotech/trinostructure.png)
+![Esquemas Trino](./img/stelviotech/trinostructure.png)
+7. Acceder a [Minio](http://localhost:9001/browser) (donde manejaremos la entrada de datos para la conversión posterior):  
 
-7. Not yet defined (Iceberg conversion)
+![Minio panel](./img/stelviotech/miniopanel.png)
+## directorios ngods
+Aquí hay algunos directorios de la distribución que puede que tenga que personalizar:
 
-## ngods directories
-Here are few distribution's directories that you may need to customize:
-
-- `conf` configuration of all data stack components
-    - `cube` cube.dev schema (semantic model definition)
-- `data` main data directory 
-    - `minio` root data directory (contains buckets and file data)
-    - `spark` Jupyter notebooks
-    - `stage` file stage data. Spark can access this directory via `/var/lib/ngods/stage` path. 
-- `projects` dbt, Dagster, and DataHub projects
-    - `dagster` Dagster orchestration project
-    - `dbt` dbt transformations (one project per each medallion stage: `bronze`, `silver`, and `gold`) 
-
+- `conf` configuración de todos los componentes de la pila de datos    - `cube` cube.dev schema (definición del modelo semántico)
+- `data` directorio principal de datos 
+    - `minio` directorio raíz de datos (contiene buckets y datos de ficheros)
+- `projects` proyectos dbt, Dagster y DataHub
+    - `dagster` Proyecto de orquestación de Dagster
+    - `Trino` capa de aceleración Sql
 ## ngods endpoints
-The data stack has the following endpoints
+La pila de datos tiene los siguientes puntos finales
 
-- Spark
-    - http://localhost:8888 - Jupyter notebooks 
-    - `jdbc:hive2://localhost:10009` JDBC URL (no username / password)
-    - localhost:7077 - Spark API endpoint
-    - http://localhost:8061 - Spark master node monitoring page 
-    - http://localhost:8062 - Spark slave node monitoring page 
-    - http://localhost:18080 - Spark history server page 
-- Trino
     - `jdbc:trino://localhost:8060` JDBC URL (username `trino` / no password)
 - Postgres
     - `jdbc:postgresql://localhost:5432/ngods` JDBC URL (username `ngods` / password `ngods`)
 - Dagster
-    - http://localhost:3070 - Dagster orchestration UI
+    - http://localhost:3000 - Dagster orchestration UI
 - Minio
     - http://localhost:9001 - Minio UI (username `minio` / password `minio123`)
-
-## ngods databases: Spark, Trino, and Postgres
-ngods stack includes three database engines: Spark, Trino, and Postgres. Both Spark and Trino have access to Iceberg tables in `warehouse.bronze` and `warehouse.silver` schemas. Trino engine can also access the `analytics.gold` schema in Postgres. Trino can federate queries between the Postgres and Iceberg tables. 
-
 # Docker compose modification
 A la hora de ejecutar la aplicacion, lo haremos de la forma normal y esperable para un docker compose, "docker compose up", las principales modificaciones son, la creacion de imagen de aio ahora incluye un requirements, que nos permite interactuar de forma correcta con dagster y python.
 Por otra parte la imagen de trino, se ejecuta mediante un dockerfile ya encontrado previamente en el directorio, mas estaba comentada, principalmente se encarga de inicializar correctamente 
@@ -107,33 +86,43 @@ Por ultimo hemos de mencionar la desaparicion de muchas de las funcionalidades c
 
 # projects/dagster modification
 En la carpeta projects/dagster se encuentran los archivos que definen el flujo de trabajo de dagster.
-Encontramos ademas carpetas como input_files o processed files orientadas a la gestion de los archivos de input recibidos por parte de las distintas
-empresas, por otra parte tenemos launch, donde se generaran archivos de tipo sql con los cuales podremos recrear la base de datos en caso de reiniciar el sistema o una perdida de su estado.
+Encontramos ademas carpetas como input_files o processed files orientadas a la gestion de los archivos de input 
+recibidos por parte de las distintas
+empresas, por otra parte tenemos launch, donde se generaran archivos de tipo sql con los cuales podremos recrear la base
+de datos en caso de reiniciar el sistema o una perdida de su estado.
 
 # Trino
-Trino es un motor de consulta SQL distribuido que permite ejecutar consultas analíticas interactivas contra datos de cualquier tamaño. Trino es capaz de unir datos de múltiples fuentes, como bases de datos relacionales, sistemas de archivos locales y remotos, y sistemas de almacenamiento en la nube. Trino es un proyecto de código abierto y es compatible con la mayoría de las herramientas de análisis de datos y visualización de datos.
+Trino es un motor de consulta SQL distribuido que permite ejecutar consultas analíticas interactivas contra datos de
+cualquier tamaño. Trino es capaz de unir datos de múltiples fuentes, como bases de datos relacionales, sistemas de
+archivos locales y remotos, y sistemas de almacenamiento en la nube. Trino es un proyecto de código abierto y es
+compatible con la mayoría de las herramientas de análisis de datos y visualización de datos.
 
-Ahora, trino forma una parte fundamental del sistema presentado, por ello queremos destacar como funciona la generacion de catalogos.
+Ahora, trino forma una parte fundamental del sistema presentado, por ello queremos destacar como funciona la
+generacion de catalogos.
 
-- Esto se lleva a cabo de manera manual en la carpeta (./trino/conf/trino), alli encontramos desde el formato de creacion de los catalogos hasta las propiedas de nodos o la jvm empleada. Para mas informacion mirar (./trino/conf/trino/Dockerfile)
+- Esto se lleva a cabo de manera manual en la carpeta (./trino/conf/trino), alli encontramos desde el formato 
+de creacion de los catalogos hasta las propiedas de nodos o la jvm empleada. Para mas informacion mirar (./trino/conf/trino/Dockerfile)
 
-
-## workspace.py
-Contiene las distintas funciones y operaciones requeridas para la ejercucion de los distintos flujos de trabajo, como por ejemplo la operacion de descarga de archivos, la operacion de procesamiento de archivos, la operacion de carga de archivos, entre otras.
-### iterate_lib
-itera a traves de los archivos de input_files y ejecuta la operacion de descarga de archivos.
-Esto ultimo se efectua mediante un diccionario, cuyas entradas son: rows, columns, name_file, t_Create todas ellas explicadas enviadas a init que se encargara de gestionar los datos para la creacion de las tablas.
-### read_files_op
-- Funcion encargada de la descarga del archivo.
-
-- Itera a traves de las tuplas de una tabla y genera una serie de listas, lista, la cual contiene los valores para la creacion de la tabla, rows, las filas de la tabla y columns, las columnas de la tabla.
-### identify_string_type
-identica de que valor se trata el string insertado, para determinar que formato tienen los valores a insertar, por ahora incluye, timestamp, bigint, double y varchar, esto se lleva a cabo con la libreria regex de python (expresiones regulares).
-
-### init
-Funcion encargada de ligar las anteriores operaciones, con el objetivo de establecer la base de datos, sigue una estructura: Catalogo-schema-tablas.
-- Verifica la existencia de un archivo de persistencia en launch, si no existe, salta directamente a la lectura de excels en input_files. En caso contrario ejecuta todas las queries encontradas en los respectivos archivos dentro de launch.
+## assets.py
+Contiene los principales assets o unidades de trabajo que se emplean a la hora de realizar un job (o tarea), además de 
+todas las funciones auxiliares requeridas para desempeñar su funcionalidad.
+## __init__.py
+Contiene las conección con trino, así como la definición de las tareas y recursos
+### obtain_data_from_excels
+Este asset itera a traves de los archivos contenidos en los distintos buckets de minio y ejecuta la operacion de descarga de archivos.
+Esto ultimo se efectua mediante un diccionario, cuyas entradas son: rows, columns, name_file, bucket_name todas ellas 
+explicadas enviadas a transform_data que se encargara de gestionar los datos para la creacion de las tablas.
+### Transform_data
+Asset encargado de ligar las anteriores operaciones, con el objetivo de establecer la base de datos, sigue una
+estructura: Catalogo-schema-tablas.
 - Lectura de diccionarios de tipo:
-    - t_Create: Guarda el tipo de valor de la columna asi como su nombre, para la creacion de la tabla.
-    - Rows, columns y name_file, que como sus nombres indican, son para la posterior generacion de tabla en la base de datos con unas ciertas, filas, columnas y nombre de archivo.
-    - Por ultimo cabe destacar que todas las queries ejecutadas en esta funcion son guardadas en una serie de listas de queries, las cuales se persisten (persist_query_list) en archivos de tipo sql en launch.
+    - name: Guarda el nombre del objeto minIO al que estamos accediendo.
+    - Rows, columns: Guardan las columnas y filas de la tabla.
+    - bucket_name: Guarda el nombre del bucket al que hace referencia la tabla.
+de datos con unas ciertas, filas, columnas y nombre de archivo.
+### obtain_data_from_json
+Este asset repite la logica aplicada en el definido anteriormente, basicamente itera a traves de las distintas localizaciones
+en un bucket procesa los datos para mandarlos a transform_json_data
+### tranform_json_data
+De la misma manera que lo hace transform data, envía la información contenida en los archivos json a través de trino
+

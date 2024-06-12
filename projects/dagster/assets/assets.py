@@ -114,23 +114,20 @@ def transform_data(context, tables):
 
 
 @asset(group_name="Data_Integration_json")
-def obtain_data_from_jsons(context):
+def obtain_data_from_json(context):
     minio_cli = init_minio_server(9000, "minio", "minio123")
-    buckets = minio_cli.list_buckets()
     jsons = []
-    for bucket in buckets:
-        if 'json' in bucket.name and not 'processed' in bucket.name:
-            objects = minio_cli.list_objects(bucket.name, recursive=True)
-            for obj in objects:
-                if obj.object_name.endswith(".json"):
-                    file_data = minio_cli.get_object(bucket.name, obj.object_name)
-                    json_data = json.loads(file_data.read())
-                    jsons.append(json_data)
-                    minio_mv(minio_cli, bucket.name, obj)
+    name = "configuration"
+    objects = minio_cli.list_objects(name, recursive=True)
+    for obj in objects:
+        if obj.object_name.endswith(".json"):
+            file_data = minio_cli.get_object(name, obj.object_name)
+            json_data = json.loads(file_data.read())
+            jsons.append(json_data)
     return jsons
 
 
-@asset(ins={"jsons": AssetIn("obtain_data_from_jsons")},
+@asset(ins={"jsons": AssetIn("obtain_data_from_json")},
        group_name="Data_Integration_json",
        required_resource_keys={"trino"})
 def transform_json(context, jsons):
@@ -205,9 +202,9 @@ def read_files_op(context, path, sheet):
 
 def to_sql(string: str):
     study = string.lower()
-    if study is "number":
+    if study == "number":
         return "bigint"
-    elif study is "date":
+    elif study == "date":
         return "date"
     else:
         return "varchar"
