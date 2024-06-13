@@ -1,0 +1,7 @@
+pandas==1.4.3
+dagster
+pandas
+trino
+dagit
+openpyxl
+minio

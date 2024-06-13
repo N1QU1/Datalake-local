@@ -24,30 +24,28 @@ services:
       retries: 5
 
   mc:
-    #image: minio/mc
-    image: answercn/mc
+    image: minio/mc
     container_name: mc
     hostname: mc
     environment:
       - AWS_ACCESS_KEY_ID=minio
       - AWS_SECRET_ACCESS_KEY=minio123
-      - AWS_REGION=us-east-1
+      - AWS_REGION=us-west-1
     networks:
       - ndsnet
     entrypoint: >
       /bin/sh -c "
       until (/usr/bin/mc config host add minio http://minio:9000 minio minio123) do echo '...waiting...' && sleep 1; done;
-      /usr/bin/mc mb minio/warehouse;
-      /usr/bin/mc policy set public minio/warehouse;
+      /usr/bin/mc mb minio/configuration;
+      /usr/bin/mc policy set public minio/configuration;
       exit 0;
-      "    
+      "
     depends_on:
       minio:
-        condition: service_healthy  
-
+        condition: service_healthy
   postgres:
     #image: postgres
-    image: answercn/postgres
+    image: postgres
     hostname: postgres
     container_name: postgres
     environment:
@@ -65,48 +63,41 @@ services:
       retries: 5
   
   aio:
-    #build: aio/
-    #image: answercn/ngods-stocks-aio
-    build: aio/
+    build: projects/
     container_name: aio
-    environment:
-      - AWS_ACCESS_KEY_ID=minio
-      - AWS_SECRET_ACCESS_KEY=minio123
-      - AWS_REGION=us-east-1
-    volumes:
-      - ./data/html:/var/lib/ngods/html
-      - ./data/stage:/var/lib/ngods/stage
-      - ./data/spark/notebooks:/var/lib/ngods/notebooks
-      - ./projects:/var/lib/ngods
-      - ./projects/dbt:/var/lib/ngods/dbt
+    #environment:
+    #  - AWS_ACCESS_KEY_ID=minio
+    #  - AWS_SECRET_ACCESS_KEY=minio123
+    #  - AWS_REGION=us-east-1
     ports:
-      - '8888:8888' # Spark notebook port
-      - '7077:7077' # Spark port
-      - '8061:8061' # Spark master web ui port
-      - '8062:8062' # Spark worker web ui port
-      - '10001:10001' # Thrift ODBC/JDBC port
-      - '10009:10009' # Kyuubi JDBC port
-      - '18080:18080' # Spark history web ui port
-      - '3070:3070' # Dagster web ui port
+      #- '8888:8888' # Spark notebook port
+      #- '7077:7077' # Spark port
+      #- '8061:8061' # Spark master web ui port
+      #- '8062:8062' # Spark worker web ui port
+      #- '10001:10001' # Thrift ODBC/JDBC port
+      #- '10009:10009' # Kyuubi JDBC port
+      #- '18080:18080' # Spark history web ui port
+      - "3000:3000" # Dagster web ui port
     networks:
       ndsnet:
         aliases:
-          - spark
           - dagster
           - dbt
           - aio
-    command: 
-      - notebook
+    volumes:
+      - ./projects/dagster/input_files:/opt/dagster/app/input_files
+      - ./projects/dagster/processed_files:/opt/dagster/app/processed_files
+      - ./projects/dagster/launch:/opt/dagster/app/launch
+      - ./projects/dagster/assets:/opt/dagster/app/assets
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
-  
+
+
   trino:
     build: trino/
-    #image: answercn/ngods-stocks-aio
-    #build: trino/conf/
     container_name: trino
     volumes:
       - ./data/stage:/var/lib/ngods/stage
@@ -114,14 +105,13 @@ services:
       - ./certs/trino_key_and_cert.pem:/trino_key_and_cert.pem
       - ./certs/trino_key.pem:/trino_key.pem
       - ./certs/trino_cert.pem:/trino_cert.pem
-      - ./trino/conf/:/etc/trino-conf
     ports:
       - '8060:8060' # Trino
       - '8063:8063' # Trino
     networks:
       ndsnet:
         aliases:
-          - trino
+            - trino
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,8 +123,6 @@ services:
         soft: 20000
         hard: 40000
 
-  
-  
 networks:
   ndsnet:
     driver: bridge

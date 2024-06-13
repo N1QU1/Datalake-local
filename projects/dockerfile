@@ -1,0 +1,22 @@
+FROM python:3.10-slim
+
+RUN mkdir -p /opt/dagster/app
+
+ENV DAGSTER_HOME=/opt/dagster/app/
+
+COPY requirements.txt .
+
+RUN pip install -r requirements.txt
+
+RUN pip install dagster-webserver dagit dagster-postgres
+
+WORKDIR /opt/dagster/app
+
+# Copy your code and workspace to /opt/dagster/app
+COPY dagster/. /opt/dagster/app/
+
+expose 8060
+expose 3000
+expose 9000
+
+ENTRYPOINT ["dagster", "dev", "-w", "/opt/dagster/app/workspace.yaml", "-h", "0.0.0.0"]

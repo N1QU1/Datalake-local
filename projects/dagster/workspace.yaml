@@ -1,2 +1,3 @@
 load_from:
-  - python_file: workspace.py
+  - python_package:
+      package_name: assets

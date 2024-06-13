@@ -1,0 +1,9 @@
+telemetry:
+  enabled: false
+nux:
+  enabled: false
+local_artifact_storage:
+  module: dagster.core.storage.root
+  class: LocalArtifactStorage
+  config:
+    base_dir: "/opt/dagster/local/"
