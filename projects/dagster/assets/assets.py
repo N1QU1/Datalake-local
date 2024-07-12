@@ -1,6 +1,3 @@
-import os
-import shutil
-
 from datetime import datetime
 import pandas as pd
 import re
@@ -34,7 +31,8 @@ def obtain_data_from_excels(context):
                 if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
                     create_info_table(conn)
                 for bucket in buckets:
-                    if 'processed' not in bucket.name and 'json' not in bucket.name:
+                    if "configuration" not in bucket.name:
+                        add_directory_to_config(bucket.name,minio_cli)
                         fixed_bucket_name = fix_string(bucket.name)
                         context.log.info(f"Processing files in bucket: {fixed_bucket_name}")
                         if len(check_tables_in_schema(conn, f"my_catalog.{fixed_bucket_name}")) == 0:
@@ -69,7 +67,6 @@ def obtain_data_from_excels(context):
                                         i += 1
                                 # Mover el archivo procesado a una carpeta diferente
                                 minio_mv(minio_cli, bucket.name, obj)
-                                conn.commit()
     except S3Error as e:
         print("Error:", e)
         return tables
@@ -109,7 +106,7 @@ def transform_data(context, tables):
                 except Exception as e:
                     context.log.error(f'Error creating schema: {e}')
                     return []
-            conn.commit()
+
     return []
 
 
@@ -210,8 +207,34 @@ def to_sql(string: str):
         return "varchar"
 
 
+def add_directory_to_config(folder_name, client):
+    dirs = list_directories("configuration", client)
+    for dir in dirs:
+        if dir == folder_name:
+            return False
+
+    byte_stream = BytesIO(b'')
+
+    client.put_object("configuration", folder_name + "/", data=byte_stream, length=0)
+    return True
+
+
+def list_directories(bucket_name, client):
+    # Use list_objects with recursive=False to get top-level directories
+    objects = client.list_objects(bucket_name, recursive=False)
+
+    directories = set()
+    for obj in objects:
+        # Split object name by '/' and get the top-level directory
+        parts = obj.object_name.split('/')
+        if len(parts) > 1:
+            directories.add(parts[0] + '/')
+
+    return directories
+
+
 def minio_mv(minio_cli, bucket_name, obj):
-    minio_cli.copy_object(f"processed-{bucket_name}", obj.object_name, CopySource(bucket_name, obj.object_name))
+    minio_cli.copy_object(f"configuration", f"/{bucket_name}/" + obj.object_name, CopySource(bucket_name, obj.object_name))
     minio_cli.remove_object(bucket_name, obj.object_name)
 
 
@@ -302,6 +325,7 @@ def reformat_rows(row, columns):
 def input_query(conn, query):
     cursor = conn.cursor()
     cursor.execute(query)
+    conn.commit()
     return
 
 
@@ -354,6 +378,7 @@ def insert_table_to_db(conn, lista, name, bucket):
 def create_info_table(conn):
     query = '''create schema if not exists my_catalog.info'''
     input_query(conn, query)
+    #
     query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
     input_query(conn, query)
 
