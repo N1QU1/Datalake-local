@@ -59,7 +59,7 @@ def obtain_data_from_excels(context):
                                             name = (fix_string(obj.object_name).replace("xlsx", "") + "_" + fix_string(
                                                 sheet))[0:60]
                                             it = {
-                                                'name': name,
+                                                'name': sanitize_db_name(name),
                                                 'bucket_name': fixed_bucket_name,
                                                 'rows': rows,
                                                 'columns': columns
@@ -304,7 +304,13 @@ def fix_string(string):
 
     return final_string
 
-
+def sanitize_db_name(name: str):
+    sanitized_name = re.sub(r'[^\x00-\x7F]+', '', name)
+    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '', sanitized_name)
+    max_length = 63
+    if len(sanitized_name) > max_length:
+        sanitized_name = sanitized_name[:max_length]
+    return sanitized_name
 def reformat_rows(row, columns):
     row_copy = row.copy()
     columns_copy = columns.copy()
