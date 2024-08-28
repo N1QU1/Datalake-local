@@ -9,7 +9,7 @@ import json
 from minio import Minio
 from minio.error import S3Error
 from minio.commonconfig import CopySource
-
+from unidecode import unidecode
 from io import BytesIO
 
 from trino.exceptions import TrinoUserError
@@ -22,7 +22,7 @@ def obtain_data_from_excels(context):
     Parses the different files found in input_files, generates the minimum info for init to work
     """
     trino = context.resources.trino
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     i = 0
     tables = dict()
     try:
@@ -58,14 +58,15 @@ def obtain_data_from_excels(context):
                                         if len(lista) != 0:
                                             name = (fix_string(obj.object_name).replace("xlsx", "") + "_" + fix_string(
                                                 sheet))[0:60]
+                                            sanitized_name=sanitize_db_name(name)
                                             it = {
-                                                'name': sanitize_db_name(name),
+                                                'name': sanitized_name,
                                                 'bucket_name': fixed_bucket_name,
                                                 'rows': rows,
                                                 'columns': columns
                                             }
                                             # Función para insertar datos en la base de datos
-                                            insert_table_to_db(conn, lista, name, fixed_bucket_name, cf)
+                                            insert_table_to_db(conn, lista, sanitized_name, fixed_bucket_name, cf)
                                             tables.update({str(i): it})
                                             i += 1
                                     # Mover el archivo procesado a una carpeta diferente
@@ -95,7 +96,7 @@ def transform_data(context, tables):
     Its main function is to generate the tables using dictionaries obtained from iterate_lib, and saving a series
     of persistence files which we could later use in case of system malfunction
     """
-    client = init_minio_server(9000, "minio", "minio123")
+    client = init_minio_server(19000, "minio", "minio123")
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if len(tables) != 0:
@@ -134,7 +135,7 @@ def transform_data(context, tables):
 
 @asset(group_name="Data_Integration_json")
 def obtain_data_from_json(context):
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     jsons = []
     name = "configuration"
     objects = minio_cli.list_objects(name, recursive=True)
@@ -305,8 +306,8 @@ def fix_string(string):
     return final_string
 
 def sanitize_db_name(name: str):
-    sanitized_name = re.sub(r'[^\x00-\x7F]+', '', name)
-    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '', sanitized_name)
+    sanitized_name = unidecode(name)
+    sanitized_name.replace(" ", "_")	
     max_length = 63
     if len(sanitized_name) > max_length:
         sanitized_name = sanitized_name[:max_length]
@@ -414,7 +415,7 @@ def create_info_table(conn, file):
 
 def init_minio_server(port: int, name: str, password: str):
     client = Minio(
-        f"host.docker.internal:{port}",
+        f"dev.stelviotech.com:{port}",
         access_key=name,
         secret_key=password,
         secure=False

@@ -25,7 +25,7 @@ defs = Definitions(
     assets=all_assets,
     resources={
         'trino': TrinoConnection(
-            host='host.docker.internal',
+            host='dev.stelviotech.com',
             port=8060,
             user='trino',
             password=''
