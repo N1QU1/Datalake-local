@@ -9,7 +9,8 @@ setup(
         "pandas",
         "trino",
         "openpyxl",
-        "minio"
+        "minio",
+	"unidecode"
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )

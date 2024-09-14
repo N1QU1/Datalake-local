@@ -6,3 +6,4 @@ trino
 dagit
 openpyxl
 minio
+unidecode

@@ -1,5 +1,6 @@
 from datetime import datetime
 import pandas as pd
+import os
 import re
 
 from dagster import asset, AssetIn
@@ -8,7 +9,7 @@ import json
 from minio import Minio
 from minio.error import S3Error
 from minio.commonconfig import CopySource
-
+from unidecode import unidecode
 from io import BytesIO
 
 from trino.exceptions import TrinoUserError
@@ -21,52 +22,64 @@ def obtain_data_from_excels(context):
     Parses the different files found in input_files, generates the minimum info for init to work
     """
     trino = context.resources.trino
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     i = 0
     tables = dict()
     try:
-        buckets = minio_cli.list_buckets()
-        if len(buckets) > 0:
-            with (trino.get_connection() as conn):
-                if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
-                    create_info_table(conn)
-                for bucket in buckets:
-                    if "configuration" not in bucket.name:
-                        add_directory_to_config(bucket.name,minio_cli)
-                        fixed_bucket_name = fix_string(bucket.name)
-                        context.log.info(f"Processing files in bucket: {fixed_bucket_name}")
-                        if len(check_tables_in_schema(conn, f"my_catalog.{fixed_bucket_name}")) == 0:
-                            query = f'''create schema if not exists my_catalog.{fixed_bucket_name}'''
-                            input_query(conn, query)
-                        # Obtener la lista de objetos en el bucket
-                        objects = minio_cli.list_objects(bucket.name, recursive=True)
-                        for obj in objects:
-                            if obj.object_name.endswith(".xlsx"):
-                                # Leer el contenido del archivo Excel
-                                file_data = minio_cli.get_object(bucket.name, obj.object_name)
-                                excel_data = file_data.read()
-                                # Crear un objeto BytesIO a partir del contenido del archivo
-                                file_stream = BytesIO(excel_data)
-                                # Leer el archivo Excel y procesar su contenido
-                                for sheet in pd.ExcelFile(file_stream).sheet_names:
-                                    context.log.info(f"Reading file {obj.object_name} and sheet {str(sheet)}")
-                                    lista, rows, columns = read_files_op(context, file_stream,
-                                                                         str(sheet))  # Función para leer archivos Excel
-                                    if len(lista) != 0:
-                                        name = (fix_string(obj.object_name).replace("xlsx", "") + "_" + fix_string(
-                                            sheet))[0:60]
-                                        it = {
-                                            'name': name,
-                                            'bucket_name': fixed_bucket_name,
-                                            'rows': rows,
-                                            'columns': columns
-                                        }
-                                        # Función para insertar datos en la base de datos
-                                        insert_table_to_db(conn, lista, name, fixed_bucket_name)
-                                        tables.update({str(i): it})
-                                        i += 1
-                                # Mover el archivo procesado a una carpeta diferente
-                                minio_mv(minio_cli, bucket.name, obj)
+        with open("config_file.sql", "w") as cf:
+            buckets = minio_cli.list_buckets()
+            if len(buckets) > 0:
+                with (trino.get_connection() as conn):
+                    if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
+                        create_info_table(conn, cf)
+                    for bucket in buckets:
+                        if "configuration" not in bucket.name:
+                            add_directory_to_config(bucket.name, minio_cli)
+                            fixed_bucket_name = fix_string(bucket.name)
+                            context.log.info(f"Processing files in bucket: {fixed_bucket_name}")
+                            if len(check_tables_in_schema(conn, f"my_catalog.{fixed_bucket_name}")) == 0:
+                                query = f'''create schema if not exists my_catalog.{fixed_bucket_name}'''
+                                #input_query(conn, query)
+                                cf.write(query + ";\n")
+                            # Obtener la lista de objetos en el bucket
+                            objects = minio_cli.list_objects(bucket.name, recursive=True)
+                            for obj in objects:
+                                if obj.object_name.endswith(".xlsx"):
+                                    # Leer el contenido del archivo Excel
+                                    file_data = minio_cli.get_object(bucket.name, obj.object_name)
+                                    excel_data = file_data.read()
+                                    # Crear un objeto BytesIO a partir del contenido del archivo
+                                    file_stream = BytesIO(excel_data)
+                                    # Leer el archivo Excel y procesar su contenido
+                                    for sheet in pd.ExcelFile(file_stream).sheet_names:
+                                        context.log.info(f"Reading file {obj.object_name} and sheet {str(sheet)}")
+                                        lista, rows, columns = read_files_op(context, file_stream,
+                                                                             str(sheet))  # Función para leer archivos Excel
+                                        if len(lista) != 0:
+                                            name = (fix_string(obj.object_name).replace("xlsx", "") + "_" + fix_string(
+                                                sheet))[0:60]
+                                            sanitized_name=sanitize_db_name(name)
+                                            it = {
+                                                'name': sanitized_name,
+                                                'bucket_name': fixed_bucket_name,
+                                                'rows': rows,
+                                                'columns': columns
+                                            }
+                                            # Función para insertar datos en la base de datos
+                                            insert_table_to_db(conn, lista, sanitized_name, fixed_bucket_name, cf)
+                                            tables.update({str(i): it})
+                                            i += 1
+                                    # Mover el archivo procesado a una carpeta diferente
+                                    #minio_mv(minio_cli, bucket.name, obj)
+                                    #cf.close()
+                                    #os.remove(os.path.abspath(cf.name))
+                    path = os.path.abspath(cf.name)
+                    cf.close()
+                    minio_cli.fput_object(
+                        "configuration",  # Name of the bucket
+                    "configuration.sql",  # Object name in the bucket
+                    path# Path to the file to upload
+                    )
     except S3Error as e:
         print("Error:", e)
         return tables
@@ -83,26 +96,36 @@ def transform_data(context, tables):
     Its main function is to generate the tables using dictionaries obtained from iterate_lib, and saving a series
     of persistence files which we could later use in case of system malfunction
     """
+    client = init_minio_server(19000, "minio", "minio123")
     trino = context.resources.trino
     with trino.get_connection() as conn:
         if len(tables) != 0:
             for ele in tables.keys():
                 try:
-                    name = tables[ele]['name']
-                    bucket = tables[ele]['bucket_name']
-                    for row in tables[ele]['rows']:
-                        columns = tables[ele]['columns']
-                        filtered_row, filtered_columns = reformat_rows(row, columns)
-                        query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(bucket, name,
-                                                                                           str(filtered_columns).replace(
-                                                                                               "'",
-                                                                                               "")[
-                                                                                           1:-1],
-                                                                                           str(filtered_row).replace(
-                                                                                               '"',
-                                                                                               "")[
-                                                                                           1:-1])
-                        input_query(conn, query)
+                    with open(tables[ele]['name'] + ".sql", "w") as f:
+                        name = tables[ele]['name']
+                        bucket = tables[ele]['bucket_name']
+                        for row in tables[ele]['rows']:
+                            columns = tables[ele]['columns']
+                            filtered_row, filtered_columns = reformat_rows(row, columns)
+                            query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(bucket, name,
+                                                                                               str(filtered_columns).replace(
+                                                                                                   "'",
+                                                                                                   "")[
+                                                                                               1:-1],
+                                                                                               str(filtered_row).replace(
+                                                                                                   '"',
+                                                                                                   "")[
+                                                                                               1:-1])
+                            f.write(query + ";\n")
+                        client.fput_object(
+                            "configuration",  # Name of the bucket
+                            bucket + "/" + f.name,  # Object name in the bucket
+                            os.path.abspath(f.name)  # Path to the file to upload
+                        )
+                        #f.close()
+                        #os.remove(os.path.abspath(f.name))
+                            #input_query(conn, query)
                 except Exception as e:
                     context.log.error(f'Error creating schema: {e}')
                     return []
@@ -112,7 +135,7 @@ def transform_data(context, tables):
 
 @asset(group_name="Data_Integration_json")
 def obtain_data_from_json(context):
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     jsons = []
     name = "configuration"
     objects = minio_cli.list_objects(name, recursive=True)
@@ -282,7 +305,13 @@ def fix_string(string):
 
     return final_string
 
-
+def sanitize_db_name(name: str):
+    sanitized_name = unidecode(name)
+    sanitized_name.replace(" ", "_")	
+    max_length = 63
+    if len(sanitized_name) > max_length:
+        sanitized_name = sanitized_name[:max_length]
+    return sanitized_name
 def reformat_rows(row, columns):
     row_copy = row.copy()
     columns_copy = columns.copy()
@@ -363,29 +392,30 @@ def open_persisted_queries(conn, path):
             conn.commit()
 
 
-def insert_table_to_db(conn, lista, name, bucket):
+def insert_table_to_db(conn, lista, name, bucket, file):
     current_datetime = str(datetime.now()).split(".")[0]
     columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
 
     query = '''create table if not exists my_catalog.{}.{} ({})'''.format(bucket, name,
                                                                                    columns_definition)
-    input_query(conn, query)
+    #input_query(conn, query)
+    file.write(query + ";\n")
     query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
         bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
-    input_query(conn, query)
+    #input_query(conn, query)
+    file.write(query + ";\n")
 
-
-def create_info_table(conn):
+def create_info_table(conn, file):
     query = '''create schema if not exists my_catalog.info'''
-    input_query(conn, query)
-    #
+    #input_query(conn, query)
+    file.write(query + ";\n")
     query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
-    input_query(conn, query)
-
+    #input_query(conn, query)
+    file.write(query + ";\n")
 
 def init_minio_server(port: int, name: str, password: str):
     client = Minio(
-        f"host.docker.internal:{port}",
+        f"dev.stelviotech.com:{port}",
         access_key=name,
         secret_key=password,
         secure=False
