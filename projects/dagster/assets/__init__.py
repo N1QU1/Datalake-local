@@ -39,6 +39,10 @@ defs = Definitions(
         define_asset_job(
             name="Insert_json_tables",
             selection=AssetSelection.groups('Data_Integration_json'),
+        ),
+        define_asset_job(
+            name="Process_csv_data",
+            selection=AssetSelection.groups('Data_Integration_csv'),
         )
     ],
     schedules=[
