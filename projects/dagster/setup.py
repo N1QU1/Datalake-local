@@ -7,7 +7,7 @@ setup(
         "dagster",
         "dagster-webserver",
         "pandas",
-        "trino",
+        "psycopg2-binary",
         "openpyxl",
         "minio",
 	"unidecode"

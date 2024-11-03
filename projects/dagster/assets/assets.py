@@ -12,8 +12,6 @@ from minio.commonconfig import CopySource
 
 from io import BytesIO
 
-from trino.exceptions import TrinoUserError
-
 @asset(group_name="Data_Integration_excel",
        required_resource_keys={"postgres"})
 def obtain_data_from_excels(context):
@@ -26,15 +24,16 @@ def obtain_data_from_excels(context):
             buckets = minio_cli.list_buckets()
             if len(buckets) > 0:
                 with (postgres.get_connection() as conn):
-                    if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
+                    if len(check_tables_in_schema(conn, "info")) == 0:
                         create_info_table(conn, cf)
                     for bucket in buckets:
                         if "configuration" not in bucket.name:
                             add_directory_to_config(bucket.name, minio_cli)
-                            if len(check_tables_in_schema(conn, f"my_catalog.{bucket.name}")) == 0:
-                                query = f'''create schema if not exists my_catalog.{bucket.name}'''
-                                #input_query(conn, query)
-                                cf.write(query + ";\n")
+                            if len(check_tables_in_schema(conn, f"{bucket.name}")) == 0:
+                                #query = f'''create schema if not exists my_catalog.{bucket.name}'''
+                                query = f'''create schema if not exists {bucket.name};'''
+                                input_query(conn, query)
+                                #cf.write(query + ";\n")
                             # Obtener la lista de objetos en el bucket
                             objects = minio_cli.list_objects(bucket.name, recursive=True)
                             for obj in objects:
@@ -63,7 +62,7 @@ def obtain_data_from_excels(context):
                                             tables.update({str(i): it})
                                             i += 1
                                     # Mover el archivo procesado a una carpeta diferente
-                                    #minio_mv(minio_cli, bucket.name, obj)
+                                    minio_cli.remove_object(bucket.name, obj.object_name)
                                     #cf.close()
                                     #os.remove(os.path.abspath(cf.name))
                     cf.close()
@@ -102,7 +101,7 @@ def transform_data(context, tables):
                         for row in tables[ele]['rows']:
                             columns = tables[ele]['columns']
                             filtered_row, filtered_columns = reformat_rows(row, columns)
-                            query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(bucket, name,
+                            query = '''insert into {}.{} ({}) values ({})'''.format(bucket, name,
                                                                                                str(filtered_columns).replace(
                                                                                                    "'",
                                                                                                    "")[
@@ -146,25 +145,30 @@ def transform_csv(context):
                     fixed_bucket_name = fix_string(bucket.name)
                     for obj in objs:
                         if obj.object_name.endswith(".csv"):
-                            context.log.info(f"Processing files in bucket: {obj.object_name}")
+                            #context.log.info(f"Processing files in bucket: {obj.object_name}")
                             response = minio_cli.get_object(bucket.name, obj.object_name)
                             csv_file = BytesIO(response.read())
                             df = pd.read_csv(csv_file, encoding='latin-1', sep='delimiter', header=None,
                                              engine='python')
                             name_farm = sanitize_db_name(fix_string(obj.object_name[:-4]))
                             with open(name_farm + ".sql", "w") as f:
-                                query = f'''create table if not exists my_catalog.{fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
+                                #query = f'''create table if not exists my_catalog.{fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
+                                query = f'''create table if not exists {fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
+
                                 f.write(query + ";\n")
 
                                 current_datetime = str(datetime.now()).split(".")[0]
-                                query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
-                                    fixed_bucket_name + "." + name_farm,
-                                    "timestamp" + " '" + current_datetime + "'")
+                                #query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
+                                #    fixed_bucket_name + "." + name_farm,
+                                #    "timestamp" + " '" + current_datetime + "'")
+                                query = '''insert into info.files (table_name, creation) values ('{}',{})'''.format(
+                                        fixed_bucket_name + "." + name_farm,
+                                        "timestamp" + " '" + current_datetime + "'")
                                 f.write(query + ";\n")
 
                                 for index, row in df.iterrows():
                                     current_row = " ".join(row.astype(str).str.replace("\t", " "))
-                                    context.log.info(current_row)
+                                    #context.log.info(current_row)
                                     regex_formato = r'\b\d{1,2}/\d{1,2}(?:/\d{4})?\b\s+Venta\b'
                                     match = re.search(regex_formato, current_row)
                                     if "RECRIASIN" in current_row:
@@ -175,31 +179,31 @@ def transform_csv(context):
                                         prefix_farm = name_farm[0]
                                         date = dateandrow[0]
                                         purged_row = dateandrow[1]
-                                        context.log.info(purged_row)
+                                        #context.log.info(purged_row)
                                         # pattern = r'[A-ZÍÚÓÉÁÑ][a-zíúóéáñ]*(?: [a-zíúóéáñ]+)*(?: *: *)(?:[A-ZÍÚÓÉÁÑ]+(?: [A-ZÍÚÓÉÁÑ.][A-ZÍÚÓÉÁÑ.]+)*|\d+)'
                                         pattern = r"[A-Z][a-z]*(?: [a-z]*)*(?: *: *)\d+"
                                         matches = re.findall(pattern, purged_row.strip())
-                                        context.log.info(matches)
+                                        #context.log.info(matches)
                                         animales_bool = False
                                         docu_salida_bool = False
                                         data = f"'{name_farm}', '{prefix_farm}', '{date}', "
                                         for matchin in matches:
-                                            context.log.info(matchin)
+                                            #context.log.info(matchin)
                                             clave, valor = matchin.split(":")
                                             if "Animales" in clave:
                                                 data += valor + ", "
                                                 animales_bool = True
-                                                context.log.info("animales: si")
+                                                #context.log.info("animales: si")
                                                 purged_row = purged_row.replace(matchin, "")
                                             elif "Documento salida" in clave:
                                                 data += valor + ", "
                                                 docu_salida_bool = True
-                                                context.log.info("Documento salida: si")
+                                                #context.log.info("Documento salida: si")
                                                 purged_row = purged_row.replace(matchin, "")
                                         if animales_bool and docu_salida_bool:
                                             weird_purged_row = purged_row
                                             data += f"'{weird_purged_row.strip()}'"
-                                            query = f"insert into my_catalog.{fixed_bucket_name}.{str(name_farm)} (name_farm, prefix, fecha, n_animales, Documento_salida, extra) values ({data})"
+                                            query = f"insert into {fixed_bucket_name}.{str(name_farm)} (name_farm, prefix, fecha, n_animales, Documento_salida, extra) values ({data})"
                                             f.write(query + ";\n")
                                 f.close()
 
@@ -388,7 +392,7 @@ def check_tables_in_schema(conn, schema):
         cursor.execute(query)
         tables = cursor.fetchall()
         conn.commit()
-    except TrinoUserError as e:
+    except Exception as e:
         return []
     return tables
 
@@ -396,20 +400,23 @@ def insert_table_to_db(conn, lista, name, bucket, file):
     current_datetime = str(datetime.now()).split(".")[0]
     columns_definition = ', '.join([f'{col[0]} {col[1]}' for col in lista])
 
-    query = '''create table if not exists my_catalog.{}.{} ({})'''.format(bucket, name,
-                                                                                   columns_definition)
+    #query = '''create table if not exists my_catalog.{}.{} ({})'''.format(bucket, name, columns_definition)
+    query = '''create table if not exists {}.{} ({})'''.format(bucket, name,columns_definition)
     #input_query(conn, query)
     file.write(query + ";\n")
-    query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
-        bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
+    #query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
+    #    bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
+    query = '''insert into info.files (table_name, creation) values ('{}',{})'''.format(
+            bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
     #input_query(conn, query)
     file.write(query + ";\n")
 
 def create_info_table(conn, file):
-    query = '''create schema if not exists my_catalog.info'''
+    query = '''create schema if not exists info'''
     #input_query(conn, query)
     file.write(query + ";\n")
-    query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
+    #query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
+    query = '''create table if not exists info.files (table_name varchar,creation TIMESTAMP)'''
     #input_query(conn, query)
     file.write(query + ";\n")
 

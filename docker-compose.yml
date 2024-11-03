@@ -47,8 +47,9 @@ services:
       - POSTGRES_DB=ngods
     ports:
       - '45432:5432'
-    networks:
-      - ndsnet
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ngods"]
       interval: 5s
@@ -77,6 +78,8 @@ services:
           - dagster
           - dbt
           - aio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./projects/dagster/input_files:/opt/dagster/app/input_files
       - ./projects/dagster/processed_files:/opt/dagster/app/processed_files

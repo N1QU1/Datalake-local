@@ -2,8 +2,8 @@ pandas==1.4.3
 numpy==1.21.4
 dagster
 pandas
-trino
 dagit
 openpyxl
 minio
 unidecode
+psycopg2-binary

@@ -1,6 +1,6 @@
 from dagster import (Definitions, load_assets_from_modules, ConfigurableResource, define_asset_job, AssetSelection,
                      ScheduleDefinition)
-from trino.dbapi import connect
+import psycopg2
 from . import assets
 from contextlib import contextmanager
 
@@ -10,11 +10,15 @@ class TrinoConnection(ConfigurableResource):
     port: int
     user: str
     password: str
+    dbname:str
 
     @contextmanager
     def get_connection(self):
-        conn = connect(host=self.host, port=self.port,
+        conn = psycopg2.connect(dbname=self.dbname,host=self.host, port=self.port,
                        user=self.user, password=self.password)
+        cursor =conn.cursor()
+        cursor.execute("select version();")
+
         yield conn
         conn.close()
 
@@ -31,9 +35,10 @@ defs = Definitions(
     resources={
         'postgres':TrinoConnection(
             host='host.docker.internal',
-            port=5432,
+            port=45432,
             user='ngods',
-            password='ngods'
+            password='ngods',
+            dbname='ngods',
         )
     },
     jobs=[
