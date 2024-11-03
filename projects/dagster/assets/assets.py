@@ -4,8 +4,8 @@ import os
 import re
 
 from dagster import asset, AssetIn
-import json
 
+from unidecode import unidecode
 from minio import Minio
 from minio.error import S3Error
 from minio.commonconfig import CopySource
@@ -14,29 +14,25 @@ from io import BytesIO
 
 from trino.exceptions import TrinoUserError
 
-
 @asset(group_name="Data_Integration_excel",
-       required_resource_keys={"trino"})
+       required_resource_keys={"postgres"})
 def obtain_data_from_excels(context):
-    """
-    Parses the different files found in input_files, generates the minimum info for init to work
-    """
-    trino = context.resources.trino
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    postgres = context.resources.postgres
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     i = 0
     tables = dict()
     try:
         with open("config_file.sql", "w") as cf:
             buckets = minio_cli.list_buckets()
             if len(buckets) > 0:
-                with (trino.get_connection() as conn):
+                with (postgres.get_connection() as conn):
                     if len(check_tables_in_schema(conn, "my_catalog.info")) == 0:
                         create_info_table(conn, cf)
                     for bucket in buckets:
                         if "configuration" not in bucket.name:
                             add_directory_to_config(bucket.name, minio_cli)
                             if len(check_tables_in_schema(conn, f"my_catalog.{bucket.name}")) == 0:
-                                query = f'''create schema if not exists my_catalog."{bucket.name}"'''
+                                query = f'''create schema if not exists my_catalog.{bucket.name}'''
                                 #input_query(conn, query)
                                 cf.write(query + ";\n")
                             # Obtener la lista de objetos en el bucket
@@ -54,10 +50,10 @@ def obtain_data_from_excels(context):
                                         lista, rows, columns = read_files_op(context, file_stream,
                                                                              str(sheet))  # Función para leer archivos Excel
                                         if len(lista) != 0:
-                                            name = ((obj.object_name).replace(".xlsx", "") + "_" + sheet)
+                                            name = unidecode((obj.object_name).replace(".xlsx", "") + " " + sheet)
                                             context.log.info(f"Reading file {name}")
                                             it = {
-                                                'name': name,
+                                                'name': sanitize_db_name(name.replace(" ", "_")),
                                                 'bucket_name': bucket.name,
                                                 'rows': rows,
                                                 'columns': columns,
@@ -84,7 +80,7 @@ def obtain_data_from_excels(context):
 
 @asset(ins={"tables": AssetIn("obtain_data_from_excels")},
        group_name="Data_Integration_excel",
-       required_resource_keys={"trino"})
+       required_resource_keys={"postgres"})
 def transform_data(context, tables):
     """
     :param context: the context utilized during the procedure, allows us to obtain resources
@@ -92,23 +88,21 @@ def transform_data(context, tables):
     Its main function is to generate the tables using dictionaries obtained from iterate_lib, and saving a series
     of persistence files which we could later use in case of system malfunction
     """
-    client = init_minio_server(9000, "minio", "minio123")
-    trino = context.resources.trino
-    with trino.get_connection() as conn:
+    client = init_minio_server(19000, "minio", "minio123")
+    postgres = context.resources.postgres
+    with postgres.get_connection() as conn:
         if len(tables) != 0:
             for ele in tables.keys():
                 try:
                     with open(tables[ele]['name'] + ".sql", "w") as f:
                         name = tables[ele]['name']
-                        postgres_name = f'''"{name}"'''
-                        minio_bucket = fix_string(tables[ele]['bucket_name'])
-                        postgres_bucket = f'''{fix_string(tables[ele]['bucket_name'])}'''
-                        insert_table_to_db(conn, tables[ele]['lista'], postgres_name, f'''"{tables[ele]['bucket_name']}"''', f)
+                        bucket = fix_string(tables[ele]['bucket_name'])
+                        insert_table_to_db(conn, tables[ele]['lista'], name, tables[ele]['bucket_name'], f)
 
                         for row in tables[ele]['rows']:
                             columns = tables[ele]['columns']
                             filtered_row, filtered_columns = reformat_rows(row, columns)
-                            query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(postgres_bucket, postgres_name,
+                            query = '''insert into my_catalog.{}.{} ({}) values ({})'''.format(bucket, name,
                                                                                                str(filtered_columns).replace(
                                                                                                    "'",
                                                                                                    "")[
@@ -118,11 +112,16 @@ def transform_data(context, tables):
                                                                                                    "")[
                                                                                                1:-1])
                             f.write(query + ";\n")
-                        client.fput_object(
-                            "configuration",  # Name of the bucket
-                            minio_bucket + "/" + f.name,  # Object name in the bucket
-                            os.path.abspath(f.name)  # Path to the file to upload
-                        )
+                        if not os.path.exists(f.name):
+                            print(f"Error: File '{f.name}' not found.")
+                        else:
+                            client.fput_object(
+                                "configuration",  # Name of the bucket
+                                bucket + "/" + f.name,  # Object name in the bucket
+                                os.path.abspath(f.name)  # Path to the file to uploa
+                                # Absolute path of the file to upload
+                            )
+
                         #f.close()
                         #os.remove(os.path.abspath(f.name))
                             #input_query(conn, query)
@@ -134,13 +133,13 @@ def transform_data(context, tables):
 
 
 @asset(group_name="Data_Integration_csv",
-       required_resource_keys={"trino"})
+       required_resource_keys={"postgres"})
 def transform_csv(context):
-    trino = context.resources.trino
-    minio_cli = init_minio_server(9000, "minio", "minio123")
+    postgres = context.resources.postgres
+    minio_cli = init_minio_server(19000, "minio", "minio123")
     buckets = minio_cli.list_buckets()
     if len(buckets) > 0:
-        with trino.get_connection() as conn:
+        with postgres.get_connection() as conn:
             for bucket in buckets:
                 if "configuration" not in bucket.name:
                     objs = minio_cli.list_objects(bucket.name, recursive=True)
@@ -150,15 +149,17 @@ def transform_csv(context):
                             context.log.info(f"Processing files in bucket: {obj.object_name}")
                             response = minio_cli.get_object(bucket.name, obj.object_name)
                             csv_file = BytesIO(response.read())
-                            df = pd.read_csv(csv_file, encoding='latin-1', sep='delimiter', header=None, engine='python')
+                            df = pd.read_csv(csv_file, encoding='latin-1', sep='delimiter', header=None,
+                                             engine='python')
                             name_farm = sanitize_db_name(fix_string(obj.object_name[:-4]))
                             with open(name_farm + ".sql", "w") as f:
-                                query = f'''create table if not exists my_catalog.{fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, batchin varchar, n_animales bigint, Batchout bigint, Extra varchar)'''
+                                query = f'''create table if not exists my_catalog.{fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
                                 f.write(query + ";\n")
 
                                 current_datetime = str(datetime.now()).split(".")[0]
-                                query =  '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
-                                    fixed_bucket_name + "." + name_farm, "timestamp" + " '" + current_datetime + "'")
+                                query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
+                                    fixed_bucket_name + "." + name_farm,
+                                    "timestamp" + " '" + current_datetime + "'")
                                 f.write(query + ";\n")
 
                                 for index, row in df.iterrows():
@@ -175,9 +176,10 @@ def transform_csv(context):
                                         date = dateandrow[0]
                                         purged_row = dateandrow[1]
                                         context.log.info(purged_row)
-                                        #pattern = r'[A-ZÍÚÓÉÁÑ][a-zíúóéáñ]*(?: [a-zíúóéáñ]+)*(?: *: *)(?:[A-ZÍÚÓÉÁÑ]+(?: [A-ZÍÚÓÉÁÑ.][A-ZÍÚÓÉÁÑ.]+)*|\d+)'
+                                        # pattern = r'[A-ZÍÚÓÉÁÑ][a-zíúóéáñ]*(?: [a-zíúóéáñ]+)*(?: *: *)(?:[A-ZÍÚÓÉÁÑ]+(?: [A-ZÍÚÓÉÁÑ.][A-ZÍÚÓÉÁÑ.]+)*|\d+)'
                                         pattern = r"[A-Z][a-z]*(?: [a-z]*)*(?: *: *)\d+"
                                         matches = re.findall(pattern, purged_row.strip())
+                                        context.log.info(matches)
                                         animales_bool = False
                                         docu_salida_bool = False
                                         data = f"'{name_farm}', '{prefix_farm}', '{date}', "
@@ -187,77 +189,25 @@ def transform_csv(context):
                                             if "Animales" in clave:
                                                 data += valor + ", "
                                                 animales_bool = True
+                                                context.log.info("animales: si")
                                                 purged_row = purged_row.replace(matchin, "")
                                             elif "Documento salida" in clave:
                                                 data += valor + ", "
                                                 docu_salida_bool = True
+                                                context.log.info("Documento salida: si")
                                                 purged_row = purged_row.replace(matchin, "")
                                         if animales_bool and docu_salida_bool:
                                             weird_purged_row = purged_row
                                             data += f"'{weird_purged_row.strip()}'"
-                                            query = f"insert into my_catalog.{fixed_bucket_name}.{str(name_farm)} (name_farm, prefix, batchin, n_animales, Batchout, extra) values ({data})"
+                                            query = f"insert into my_catalog.{fixed_bucket_name}.{str(name_farm)} (name_farm, prefix, fecha, n_animales, Documento_salida, extra) values ({data})"
                                             f.write(query + ";\n")
-
+                                f.close()
 
                                 minio_cli.fput_object(
                                     "configuration",  # Name of the bucket
                                     bucket.name + "/" + f.name,  # Object name in the bucket
                                     os.path.abspath(f.name)  # Path to the file to upload
                                 )
-
-@asset(group_name="Data_Integration_json")
-def obtain_data_from_json(context):
-    minio_cli = init_minio_server(9000, "minio", "minio123")
-    jsons = []
-    name = "configuration"
-    objects = minio_cli.list_objects(name, recursive=True)
-    for obj in objects:
-        if obj.object_name.endswith(".json"):
-            file_data = minio_cli.get_object(name, obj.object_name)
-            json_data = json.loads(file_data.read())
-            jsons.append(json_data)
-    return jsons
-
-
-@asset(ins={"jsons": AssetIn("obtain_data_from_json")},
-       group_name="Data_Integration_json",
-       required_resource_keys={"trino"})
-def transform_json(context, jsons):
-    trino = context.resources.trino
-    with trino.get_connection() as conn:
-        max_len = 5
-        try:
-            for ele in jsons:
-                company_initials = ""
-                if isinstance(ele['products'][0]['company']['name'], str):
-                    company_name = fix_string(ele['products'][0]['company']['name'])
-                    query = '''create schema if not exists my_catalog.{}'''.format(company_name)
-                    input_query(conn, query)
-                    count = 0
-                    for word in str(company_name).split("_"):
-                        count += 1
-                        if count == max_len:
-                            break
-                        company_initials += word[0]
-                    workflow_steps = ele['workflowSteps']
-                    for workflow in workflow_steps:
-                        workflow_name = workflow['name']
-                        wds_data_names = ''
-                        for workflow_step_data_field in workflow['workflowStepDataFields']:
-                            name = workflow_step_data_field['name']
-                            data_type = workflow_step_data_field['workflowDataType']
-                            wds_data_names += name + " " + to_sql(data_type) + ", "
-                            table_name = fix_string(company_initials + "_" + workflow_name)
-                        if len(wds_data_names) > 0:
-                            query = '''create table if not exists my_catalog.{}.{} ({})'''.format(company_name,
-                                                                                                  table_name,
-                                                                                                  (str(wds_data_names[:-2])))
-
-                            input_query(conn, query)
-        except KeyError as e:
-            context.log.error(f'Error creating schema: {e}')
-    return []
-
 
 def read_files_op(context, path, sheet):
     try:
@@ -274,7 +224,7 @@ def read_files_op(context, path, sheet):
             all_columns = df.columns.tolist()
             for column in all_columns:
                 column_array = df[column].tolist()
-                corrected_column = "\"" + column + "\""
+                corrected_column =  sanitize_db_name(unidecode(column))
                 column_value = None
                 for value in column_array:
                     if str(value) not in bad_words:
@@ -384,6 +334,7 @@ def sanitize_db_name(name: str):
     if len(sanitized_name) > max_length:
         sanitized_name = sanitized_name[:max_length]
     return sanitized_name
+
 def reformat_rows(row, columns):
     row_copy = row.copy()
     columns_copy = columns.copy()
@@ -440,29 +391,6 @@ def check_tables_in_schema(conn, schema):
     except TrinoUserError as e:
         return []
     return tables
-
-
-def check_schemas_in_catalog(conn, catalog):
-    try:
-        query = f"""SHOW schemas FROM {catalog}"""
-        cursor = conn.cursor()
-        cursor.execute(query)
-        tables = cursor.fetchall()
-        conn.commit()
-    except TrinoUserError as e:
-        return []
-    return tables
-
-
-def open_persisted_queries(conn, path):
-    with open(path, "r", encoding="UTF-8") as file:
-        f = file.read()
-        for query in f.split("\n")[:-1]:
-            cursor = conn.cursor()
-            cursor.execute(query)
-            cursor.fetchall()
-            conn.commit()
-
 
 def insert_table_to_db(conn, lista, name, bucket, file):
     current_datetime = str(datetime.now()).split(".")[0]

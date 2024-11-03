@@ -17,11 +17,7 @@ services:
     command: server /data --console-address ":9001"
     networks:
       - ndsnet
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://dev.stelviotech.com:19000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+
 
   mc:
     image: minio/mc
@@ -40,20 +36,17 @@ services:
       /usr/bin/mc policy set public minio/configuration;
       exit 0;
       "
-    depends_on:
-      minio:
-        condition: service_healthy
+
   postgres:
     #image: postgres
     image: postgres
-    hostname: postgres
     container_name: postgres
     environment:
       - POSTGRES_PASSWORD=ngods
       - POSTGRES_USER=ngods
       - POSTGRES_DB=ngods
     ports:
-      - '5432'
+      - '45432:5432'
     networks:
       - ndsnet
     healthcheck:
@@ -92,8 +85,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+
 
 
   trino:
@@ -114,8 +106,6 @@ services:
             - trino
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     ulimits:
       nproc: 65535
