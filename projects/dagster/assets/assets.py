@@ -24,12 +24,13 @@ def obtain_data_from_excels(context):
             buckets = minio_cli.list_buckets()
             if len(buckets) > 0:
                 with (postgres.get_connection() as conn):
-                    if len(check_tables_in_schema(conn, "info")) == 0:
+                    if not check_if_schema_exists(conn, "info")[0]:
                         create_info_table(conn, cf)
                     for bucket in buckets:
+                        context.log.info(check_if_schema_exists(conn, f"{bucket.name}")[0])
                         if "configuration" not in bucket.name:
                             add_directory_to_config(bucket.name, minio_cli)
-                            if len(check_tables_in_schema(conn, f"{bucket.name}")) == 0:
+                            if not (check_if_schema_exists(conn, f"{bucket.name}")[0]):
                                 #query = f'''create schema if not exists my_catalog.{bucket.name}'''
                                 query = f'''create schema if not exists {bucket.name};'''
                                 input_query(conn, query)
@@ -110,6 +111,7 @@ def transform_data(context, tables):
                                                                                                    '"',
                                                                                                    "")[
                                                                                                1:-1])
+                            input_query(conn,query)
                             f.write(query + ";\n")
                         if not os.path.exists(f.name):
                             print(f"Error: File '{f.name}' not found.")
@@ -154,7 +156,7 @@ def transform_csv(context):
                             with open(name_farm + ".sql", "w") as f:
                                 #query = f'''create table if not exists my_catalog.{fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
                                 query = f'''create table if not exists {fixed_bucket_name}.{name_farm} (name_farm varchar, prefix varchar, fecha varchar, n_animales bigint, Documento_salida bigint, Extra varchar)'''
-
+                                input_query(conn,query)
                                 f.write(query + ";\n")
 
                                 current_datetime = str(datetime.now()).split(".")[0]
@@ -164,6 +166,7 @@ def transform_csv(context):
                                 query = '''insert into info.files (table_name, creation) values ('{}',{})'''.format(
                                         fixed_bucket_name + "." + name_farm,
                                         "timestamp" + " '" + current_datetime + "'")
+                                input_query(conn, query)
                                 f.write(query + ";\n")
 
                                 for index, row in df.iterrows():
@@ -204,6 +207,7 @@ def transform_csv(context):
                                             weird_purged_row = purged_row
                                             data += f"'{weird_purged_row.strip()}'"
                                             query = f"insert into {fixed_bucket_name}.{str(name_farm)} (name_farm, prefix, fecha, n_animales, Documento_salida, extra) values ({data})"
+                                            input_query(conn, query)
                                             f.write(query + ";\n")
                                 f.close()
 
@@ -382,18 +386,18 @@ def input_query(conn, query):
     cursor = conn.cursor()
     cursor.execute(query)
     conn.commit()
+    cursor.close()
     return
 
 
-def check_tables_in_schema(conn, schema):
-    try:
-        query = f"""SHOW TABLES FROM {schema}"""
-        cursor = conn.cursor()
-        cursor.execute(query)
-        tables = cursor.fetchall()
-        conn.commit()
-    except Exception as e:
-        return []
+def check_if_schema_exists(conn ,schema):
+
+    query = f"SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '{schema}');"
+    cursor = conn.cursor()
+    cursor.execute(query)
+    tables = cursor.fetchone()
+    conn.commit()
+    cursor.close()
     return tables
 
 def insert_table_to_db(conn, lista, name, bucket, file):
@@ -402,22 +406,22 @@ def insert_table_to_db(conn, lista, name, bucket, file):
 
     #query = '''create table if not exists my_catalog.{}.{} ({})'''.format(bucket, name, columns_definition)
     query = '''create table if not exists {}.{} ({})'''.format(bucket, name,columns_definition)
-    #input_query(conn, query)
+    input_query(conn, query)
     file.write(query + ";\n")
     #query = '''insert into my_catalog.info.files (table_name, creation) values ('{}',{})'''.format(
     #    bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
     query = '''insert into info.files (table_name, creation) values ('{}',{})'''.format(
             bucket + "." + name, "timestamp" + " '" + current_datetime + "'")
-    #input_query(conn, query)
+    input_query(conn, query)
     file.write(query + ";\n")
 
 def create_info_table(conn, file):
     query = '''create schema if not exists info'''
-    #input_query(conn, query)
+    input_query(conn, query)
     file.write(query + ";\n")
     #query = '''create table if not exists my_catalog.info.files (table_name varchar,creation TIMESTAMP)'''
     query = '''create table if not exists info.files (table_name varchar,creation TIMESTAMP)'''
-    #input_query(conn, query)
+    input_query(conn, query)
     file.write(query + ";\n")
 
 def init_minio_server(port: int, name: str, password: str):
